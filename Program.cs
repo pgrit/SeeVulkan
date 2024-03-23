@@ -4,7 +4,6 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Silk.NET.Core;
-using Silk.NET.Core.Contexts;
 using Silk.NET.Core.Native;
 using Silk.NET.Input;
 using Silk.NET.Vulkan;
@@ -40,7 +39,6 @@ window.Load += () => {
     }
 };
 window.Update += _ => { };
-window.FramebufferResize += newSize => { };
 
 var vk = Vk.GetApi();
 
@@ -588,6 +586,15 @@ unsafe Framebuffer[] CreateFramebuffers()
 }
 var framebuffers = CreateFramebuffers();
 
+unsafe void CleanUpSwapchain()
+{
+    foreach (var buffer in framebuffers)
+        vk.DestroyFramebuffer(device, buffer, null);
+    foreach (var imageView in swapChainImageViews)
+        vk.DestroyImageView(device, imageView, null);
+    khrSwapChain.DestroySwapchain(device, swapChain, null);
+}
+
 unsafe CommandPool CreateCommandPool()
 {
     uint queueIdx = FindQueueFamilyIndex(physicalDevice).Graphics;
@@ -692,13 +699,45 @@ unsafe (Semaphore[], Semaphore[], Fence[], Fence[]) CreateSyncObjects()
 }
 var (imageAvailableSemaphores, renderFinishedSemaphores, inFlightFences, imagesInFlight) = CreateSyncObjects();
 
+void RecreateSwapChain() {
+    var framebufferSize = window.FramebufferSize;
+
+    while (framebufferSize.X == 0 || framebufferSize.Y == 0)
+    {
+        framebufferSize = window.FramebufferSize;
+        window.DoEvents();
+    }
+
+    vk.DeviceWaitIdle(device);
+
+    CleanUpSwapchain();
+
+    (khrSwapChain, swapChain, swapChainImages, swapChainImageFormat, swapChainExtent) = CreateSwapChain();
+    swapChainImageViews = CreateImageViews();
+    renderPass = CreateRenderPass();
+    (pipeline, pipelineLayout) = CreatePipeline();
+    framebuffers = CreateFramebuffers();
+    commandBuffers = CreateCommandBuffers();
+
+    imagesInFlight = new Fence[swapChainImages!.Length];
+}
+
+bool resized = false;
+window.FramebufferResize += newSize => { resized = true; };
+
 int currentFrame = 0;
 unsafe void DrawFrame(double delta)
 {
     vk.WaitForFences(device, 1, inFlightFences[currentFrame], true, ulong.MaxValue);
 
     uint imageIndex = 0;
-    khrSwapChain.AcquireNextImage(device, swapChain, ulong.MaxValue, imageAvailableSemaphores[currentFrame], default, ref imageIndex);
+    var result = khrSwapChain.AcquireNextImage(device, swapChain, ulong.MaxValue, imageAvailableSemaphores[currentFrame], default, ref imageIndex);
+    if (result == Result.ErrorOutOfDateKhr || result == Result.SuboptimalKhr || resized)
+    {
+        RecreateSwapChain();
+        resized = false;
+        return;
+    }
 
     if (imagesInFlight[imageIndex].Handle != default)
     {
@@ -759,6 +798,7 @@ window.Render += DrawFrame;
 
 window.Run();
 
+CleanUpSwapchain();
 unsafe {
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
@@ -767,13 +807,9 @@ unsafe {
         vk.DestroyFence(device, inFlightFences[i], null);
     }
     vk.DestroyCommandPool(device, commandPool, null);
-    foreach (var buffer in framebuffers)
-        vk.DestroyFramebuffer(device, buffer, null);
+
     vk.DestroyPipelineLayout(device, pipelineLayout, null);
     vk.DestroyRenderPass(device, renderPass, null);
-    foreach (var imageView in swapChainImageViews)
-        vk.DestroyImageView(device, imageView, null);
-    khrSwapChain.DestroySwapchain(device, swapChain, null);
     vk.DestroyDevice(device, null);
     khrSurface.DestroySurface(instance, surface, null);
     vk.DestroyInstance(instance, null);
