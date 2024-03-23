@@ -22,9 +22,6 @@ var options = WindowOptions.DefaultVulkan with {
 };
 
 var window = Window.Create(options);
-window.Initialize();
-if (window.VkSurface is null)
-    throw new Exception("Windowing platform doesn't support Vulkan.");
 
 window.Load += () => {
     var input = window.CreateInput();
@@ -38,7 +35,10 @@ window.Load += () => {
         };
     }
 };
-window.Update += _ => { };
+
+window.Initialize();
+if (window.VkSurface is null)
+    throw new Exception("Windowing platform doesn't support Vulkan.");
 
 var vk = Vk.GetApi();
 
