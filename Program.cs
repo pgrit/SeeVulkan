@@ -270,6 +270,114 @@ unsafe ImageView[] CreateImageViews()
 }
 var swapChainImageViews = CreateImageViews();
 
+unsafe void CreateGraphicsPipeline()
+{
+    ShaderModule CreateShaderModule(byte[] code)
+    {
+        ShaderModuleCreateInfo createInfo = new()
+        {
+            SType = StructureType.ShaderModuleCreateInfo,
+            CodeSize = (nuint)code.Length,
+        };
+
+        ShaderModule shaderModule;
+
+        fixed (byte* codePtr = code)
+        {
+            createInfo.PCode = (uint*)codePtr;
+
+            if (vk.CreateShaderModule(device, createInfo, null, out shaderModule) != Result.Success)
+            {
+                throw new Exception();
+            }
+        }
+
+        return shaderModule;
+
+    }
+
+    byte[] CompileShader(string code, string ext)
+    {
+        string glslcExe = "glslc"; // TODO assumes it is in the path - better solution?
+        string infile = $"{Guid.NewGuid()}.{ext}";
+        File.WriteAllText(infile, code);
+        string outfile = $"{Guid.NewGuid()}.spv";
+        System.Diagnostics.Process.Start(glslcExe, [infile, "-o", outfile]).WaitForExit();
+        var bytes = File.ReadAllBytes(outfile);
+        File.Delete(infile);
+        File.Delete(outfile);
+        return bytes;
+    }
+
+    var vertShaderModule = CreateShaderModule(CompileShader(
+        """
+        #version 450
+
+        layout(location = 0) out vec3 fragColor;
+
+        vec2 positions[3] = vec2[](
+            vec2(0.0, -0.5),
+            vec2(0.5, 0.5),
+            vec2(-0.5, 0.5)
+        );
+
+        vec3 colors[3] = vec3[](
+            vec3(1.0, 0.0, 0.0),
+            vec3(0.0, 1.0, 0.0),
+            vec3(0.0, 0.0, 1.0)
+        );
+
+        void main() {
+            gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
+            fragColor = colors[gl_VertexIndex];
+        }
+        """, "vert"
+    ));
+
+    var fragShaderModule = CreateShaderModule(CompileShader(
+        """
+        #version 450
+
+        layout(location = 0) in vec3 fragColor;
+
+        layout(location = 0) out vec4 outColor;
+
+        void main() {
+            outColor = vec4(fragColor, 1.0);
+        }
+        """, "frag"
+    ));
+
+    PipelineShaderStageCreateInfo vertShaderStageInfo = new()
+    {
+        SType = StructureType.PipelineShaderStageCreateInfo,
+        Stage = ShaderStageFlags.VertexBit,
+        Module = vertShaderModule,
+        PName = (byte*)SilkMarshal.StringToPtr("main")
+    };
+
+    PipelineShaderStageCreateInfo fragShaderStageInfo = new()
+    {
+        SType = StructureType.PipelineShaderStageCreateInfo,
+        Stage = ShaderStageFlags.FragmentBit,
+        Module = fragShaderModule,
+        PName = (byte*)SilkMarshal.StringToPtr("main")
+    };
+
+    var shaderStages = stackalloc[]
+    {
+        vertShaderStageInfo,
+        fragShaderStageInfo
+    };
+
+    vk.DestroyShaderModule(device, fragShaderModule, null);
+    vk.DestroyShaderModule(device, vertShaderModule, null);
+
+    SilkMarshal.Free((nint)vertShaderStageInfo.PName);
+    SilkMarshal.Free((nint)fragShaderStageInfo.PName);
+}
+CreateGraphicsPipeline();
+
 window.Run();
 
 unsafe {
