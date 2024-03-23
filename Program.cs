@@ -1,4 +1,8 @@
-﻿using System.Runtime.InteropServices;
+﻿using System;
+using System.IO;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using Silk.NET.Core;
 using Silk.NET.Core.Contexts;
 using Silk.NET.Core.Native;
@@ -36,7 +40,6 @@ window.Load += () => {
     }
 };
 window.Update += _ => { };
-window.Render += _ => { };
 window.FramebufferResize += newSize => { };
 
 var vk = Vk.GetApi();
@@ -83,7 +86,7 @@ unsafe (KhrSurface, SurfaceKHR) CreateWindowSurface()
 }
 var (khrSurface, surface) = CreateWindowSurface();
 
-unsafe uint? FindQueueFamilyIndex(PhysicalDevice device)
+unsafe (uint Graphics, uint Present) FindQueueFamilyIndex(PhysicalDevice device)
 {
     uint queueFamilyCount = 0;
     vk.GetPhysicalDeviceQueueFamilyProperties(device, ref queueFamilyCount, null);
@@ -92,69 +95,110 @@ unsafe uint? FindQueueFamilyIndex(PhysicalDevice device)
     fixed (QueueFamilyProperties* queueFamiliesPtr = queueFamilies)
         vk.GetPhysicalDeviceQueueFamilyProperties(device, ref queueFamilyCount, queueFamiliesPtr);
 
+    uint? presentIdx = null;
+    uint? graphicsIdx = null;
     for (uint i = 0; i < queueFamilies.Length; ++i)
     {
         khrSurface.GetPhysicalDeviceSurfaceSupport(device, i, surface, out var presentSupport);
+        if (presentSupport)
+            presentIdx = i;
 
         var flags = queueFamilies[i].QueueFlags;
-        if (flags.HasFlag(QueueFlags.ComputeBit) && flags.HasFlag(QueueFlags.GraphicsBit) && presentSupport)
-            return i;
+        if (flags.HasFlag(QueueFlags.ComputeBit) && flags.HasFlag(QueueFlags.GraphicsBit))
+            graphicsIdx = i;
+
+        if (presentIdx.HasValue && graphicsIdx.HasValue)
+            break;
     }
-    return null;
+    return (graphicsIdx.Value, presentIdx.Value);
 }
 
-PhysicalDevice InitPhysicalDevice()
+unsafe PhysicalDevice InitPhysicalDevice()
 {
-    // Pick the first device that supports the desired queue
-    foreach (var device in vk.GetPhysicalDevices(instance))
-        if (FindQueueFamilyIndex(device).HasValue) return device;
+    var devices = vk.GetPhysicalDevices(instance);
 
-    throw new Exception("No suitable GPU found");
+    bool foundDiscreteGpu = false;
+    ulong bestSize = 0;
+    PhysicalDevice bestDevice = new();
+    foreach (var device in devices)
+    {
+        vk.GetPhysicalDeviceProperties(device, out var props);
+
+        // Only consider integrated GPUs if no discrete one has been found
+        if (props.DeviceType == PhysicalDeviceType.DiscreteGpu)
+            foundDiscreteGpu = true;
+        else if (foundDiscreteGpu)
+            continue;
+
+        // Pick the device with most memory (heuristic to guess the fastest one)
+        vk.GetPhysicalDeviceMemoryProperties(device, out var memoryProps);
+        for (int i = 0; i < memoryProps.MemoryHeapCount; ++i)
+        {
+            if (memoryProps.MemoryHeaps[i].Flags.HasFlag(MemoryHeapFlags.DeviceLocalBit))
+            {
+                if (memoryProps.MemoryHeaps[i].Size > bestSize)
+                {
+                    bestSize = memoryProps.MemoryHeaps[i].Size;
+                    bestDevice = device;
+                }
+            }
+        }
+    }
+
+    return bestDevice;
 }
 var physicalDevice = InitPhysicalDevice();
 
-unsafe (Device, Queue) CreateLogicalDevice()
+unsafe (Device, Queue, Queue) CreateLogicalDevice()
 {
-    uint queueIdx = FindQueueFamilyIndex(physicalDevice).Value;
+    var (graphicsIdx, presentIdx) = FindQueueFamilyIndex(physicalDevice);
+
+    uint[] uniqueQueueFamilies = new[] { graphicsIdx, presentIdx }.Distinct().ToArray();
+
+    using var mem = GlobalMemory.Allocate(uniqueQueueFamilies.Length * sizeof(DeviceQueueCreateInfo));
+    var queueCreateInfos = (DeviceQueueCreateInfo*)Unsafe.AsPointer(ref mem.GetPinnableReference());
 
     float queuePriority = 1.0f;
-    DeviceQueueCreateInfo queueCreateInfo = new()
+    for (int i = 0; i < uniqueQueueFamilies.Length; i++)
     {
-        SType = StructureType.DeviceQueueCreateInfo,
-        QueueFamilyIndex = queueIdx,
-        QueueCount = 1,
-        PQueuePriorities = &queuePriority
-    };
+        queueCreateInfos[i] = new()
+        {
+            SType = StructureType.DeviceQueueCreateInfo,
+            QueueFamilyIndex = uniqueQueueFamilies[i],
+            QueueCount = 1,
+            PQueuePriorities = &queuePriority
+        };
+    }
 
     PhysicalDeviceFeatures deviceFeatures = new();
 
     string[] extensions = [
         KhrSwapchain.ExtensionName
     ];
+
     DeviceCreateInfo createInfo = new()
     {
         SType = StructureType.DeviceCreateInfo,
-        QueueCreateInfoCount = 1,
-        PQueueCreateInfos = &queueCreateInfo,
+        QueueCreateInfoCount = (uint)uniqueQueueFamilies.Length,
+        PQueueCreateInfos = queueCreateInfos,
+
         PEnabledFeatures = &deviceFeatures,
         EnabledLayerCount = 0,
+
         EnabledExtensionCount = (uint)extensions.Length,
         PpEnabledExtensionNames = (byte**)SilkMarshal.StringArrayToPtr(extensions)
     };
 
-    var retcode = vk.CreateDevice(physicalDevice, in createInfo, null, out var device);
-    if (retcode != Result.Success)
-    {
-        throw new Exception($"CreateDevice failed with {retcode}");
-    }
+    CheckResult(vk.CreateDevice(physicalDevice, in createInfo, null, out var device), nameof(vk.CreateDevice));
 
-    vk.GetDeviceQueue(device, queueIdx, 0, out var queue);
+    vk.GetDeviceQueue(device, graphicsIdx, 0, out var graphicsQueue);
+    vk.GetDeviceQueue(device, presentIdx, 0, out var presentQueue);
 
     SilkMarshal.Free((nint)createInfo.PpEnabledExtensionNames);
 
-    return (device, queue);
+    return (device, graphicsQueue, presentQueue);
 }
-var (device, queue) = CreateLogicalDevice();
+var (device, graphicsQueue, presentQueue) = CreateLogicalDevice();
 
 unsafe (KhrSwapchain, SwapchainKHR, Image[], Format, Extent2D) CreateSwapChain()
 {
@@ -270,30 +314,62 @@ unsafe ImageView[] CreateImageViews()
 }
 var swapChainImageViews = CreateImageViews();
 
-unsafe void CreateGraphicsPipeline()
+unsafe RenderPass CreateRenderPass()
+{
+    AttachmentDescription colorAttachment = new()
+    {
+        Format = swapChainImageFormat,
+        Samples = SampleCountFlags.Count1Bit,
+        LoadOp = AttachmentLoadOp.Clear,
+        StoreOp = AttachmentStoreOp.Store,
+        StencilLoadOp = AttachmentLoadOp.DontCare,
+        InitialLayout = ImageLayout.Undefined,
+        FinalLayout = ImageLayout.PresentSrcKhr,
+    };
+
+    AttachmentReference colorAttachmentRef = new()
+    {
+        Attachment = 0,
+        Layout = ImageLayout.ColorAttachmentOptimal,
+    };
+
+    SubpassDescription subpass = new()
+    {
+        PipelineBindPoint = PipelineBindPoint.Graphics,
+        ColorAttachmentCount = 1,
+        PColorAttachments = &colorAttachmentRef,
+    };
+
+    RenderPassCreateInfo renderPassInfo = new()
+    {
+        SType = StructureType.RenderPassCreateInfo,
+        AttachmentCount = 1,
+        PAttachments = &colorAttachment,
+        SubpassCount = 1,
+        PSubpasses = &subpass,
+    };
+
+    CheckResult(vk.CreateRenderPass(device, renderPassInfo, null, out var renderPass), nameof(vk.CreateRenderPass));
+
+    return renderPass;
+}
+var renderPass = CreateRenderPass();
+
+unsafe (Pipeline, PipelineLayout) CreatePipeline()
 {
     ShaderModule CreateShaderModule(byte[] code)
     {
-        ShaderModuleCreateInfo createInfo = new()
-        {
-            SType = StructureType.ShaderModuleCreateInfo,
-            CodeSize = (nuint)code.Length,
-        };
-
-        ShaderModule shaderModule;
-
         fixed (byte* codePtr = code)
         {
-            createInfo.PCode = (uint*)codePtr;
-
-            if (vk.CreateShaderModule(device, createInfo, null, out shaderModule) != Result.Success)
+            ShaderModuleCreateInfo createInfo = new()
             {
-                throw new Exception();
-            }
+                SType = StructureType.ShaderModuleCreateInfo,
+                CodeSize = (nuint)code.Length,
+                PCode = (uint*)codePtr
+            };
+            CheckResult(vk.CreateShaderModule(device, createInfo, null, out var shaderModule), nameof(vk.CreateShaderModule));
+            return shaderModule;
         }
-
-        return shaderModule;
-
     }
 
     byte[] CompileShader(string code, string ext)
@@ -370,17 +446,331 @@ unsafe void CreateGraphicsPipeline()
         fragShaderStageInfo
     };
 
+    PipelineVertexInputStateCreateInfo vertexInputInfo = new()
+    {
+        SType = StructureType.PipelineVertexInputStateCreateInfo,
+        VertexBindingDescriptionCount = 0,
+        VertexAttributeDescriptionCount = 0,
+    };
+
+    PipelineInputAssemblyStateCreateInfo inputAssembly = new()
+    {
+        SType = StructureType.PipelineInputAssemblyStateCreateInfo,
+        Topology = PrimitiveTopology.TriangleList,
+        PrimitiveRestartEnable = false,
+    };
+
+    Viewport viewport = new()
+    {
+        X = 0,
+        Y = 0,
+        Width = swapChainExtent.Width,
+        Height = swapChainExtent.Height,
+        MinDepth = 0,
+        MaxDepth = 1,
+    };
+
+    Rect2D scissor = new()
+    {
+        Offset = { X = 0, Y = 0 },
+        Extent = swapChainExtent,
+    };
+
+    PipelineViewportStateCreateInfo viewportState = new()
+    {
+        SType = StructureType.PipelineViewportStateCreateInfo,
+        ViewportCount = 1,
+        PViewports = &viewport,
+        ScissorCount = 1,
+        PScissors = &scissor,
+    };
+
+    PipelineRasterizationStateCreateInfo rasterizer = new()
+    {
+        SType = StructureType.PipelineRasterizationStateCreateInfo,
+        DepthClampEnable = false,
+        RasterizerDiscardEnable = false,
+        PolygonMode = PolygonMode.Fill,
+        LineWidth = 1,
+        CullMode = CullModeFlags.BackBit,
+        FrontFace = FrontFace.Clockwise,
+        DepthBiasEnable = false,
+    };
+
+    PipelineMultisampleStateCreateInfo multisampling = new()
+    {
+        SType = StructureType.PipelineMultisampleStateCreateInfo,
+        SampleShadingEnable = false,
+        RasterizationSamples = SampleCountFlags.Count1Bit,
+    };
+
+    PipelineColorBlendAttachmentState colorBlendAttachment = new()
+    {
+        ColorWriteMask = ColorComponentFlags.RBit | ColorComponentFlags.GBit | ColorComponentFlags.BBit | ColorComponentFlags.ABit,
+        BlendEnable = false,
+    };
+
+    PipelineColorBlendStateCreateInfo colorBlending = new()
+    {
+        SType = StructureType.PipelineColorBlendStateCreateInfo,
+        LogicOpEnable = false,
+        LogicOp = LogicOp.Copy,
+        AttachmentCount = 1,
+        PAttachments = &colorBlendAttachment,
+    };
+
+    colorBlending.BlendConstants[0] = 0;
+    colorBlending.BlendConstants[1] = 0;
+    colorBlending.BlendConstants[2] = 0;
+    colorBlending.BlendConstants[3] = 0;
+
+    PipelineLayoutCreateInfo pipelineLayoutInfo = new()
+    {
+        SType = StructureType.PipelineLayoutCreateInfo,
+        SetLayoutCount = 0,
+        PushConstantRangeCount = 0,
+    };
+
+    CheckResult(vk.CreatePipelineLayout(device, pipelineLayoutInfo, null, out var pipelineLayout), nameof(vk.CreatePipelineLayout));
+
+    GraphicsPipelineCreateInfo pipelineInfo = new()
+    {
+        SType = StructureType.GraphicsPipelineCreateInfo,
+        StageCount = 2,
+        PStages = shaderStages,
+        PVertexInputState = &vertexInputInfo,
+        PInputAssemblyState = &inputAssembly,
+        PViewportState = &viewportState,
+        PRasterizationState = &rasterizer,
+        PMultisampleState = &multisampling,
+        PColorBlendState = &colorBlending,
+        Layout = pipelineLayout,
+        RenderPass = renderPass,
+        Subpass = 0,
+        BasePipelineHandle = default
+    };
+
+    CheckResult(vk.CreateGraphicsPipelines(device, default, 1, pipelineInfo, null, out var pipeline), nameof(vk.CreateGraphicsPipelines));
+
     vk.DestroyShaderModule(device, fragShaderModule, null);
     vk.DestroyShaderModule(device, vertShaderModule, null);
 
     SilkMarshal.Free((nint)vertShaderStageInfo.PName);
     SilkMarshal.Free((nint)fragShaderStageInfo.PName);
+
+    return (pipeline, pipelineLayout);
 }
-CreateGraphicsPipeline();
+var (pipeline, pipelineLayout) = CreatePipeline();
+
+unsafe Framebuffer[] CreateFramebuffers()
+{
+    var swapChainFramebuffers = new Framebuffer[swapChainImageViews.Length];
+
+    for (int i = 0; i < swapChainImageViews.Length; i++)
+    {
+        var attachment = swapChainImageViews[i];
+
+        FramebufferCreateInfo framebufferInfo = new()
+        {
+            SType = StructureType.FramebufferCreateInfo,
+            RenderPass = renderPass,
+            AttachmentCount = 1,
+            PAttachments = &attachment,
+            Width = swapChainExtent.Width,
+            Height = swapChainExtent.Height,
+            Layers = 1,
+        };
+
+        CheckResult(vk.CreateFramebuffer(device, framebufferInfo, null, out swapChainFramebuffers[i]), nameof(vk.CreateFramebuffer));
+    }
+
+    return swapChainFramebuffers;
+}
+var framebuffers = CreateFramebuffers();
+
+unsafe CommandPool CreateCommandPool()
+{
+    uint queueIdx = FindQueueFamilyIndex(physicalDevice).Graphics;
+
+    CommandPoolCreateInfo poolInfo = new()
+    {
+        SType = StructureType.CommandPoolCreateInfo,
+        QueueFamilyIndex = queueIdx,
+    };
+
+    CheckResult(vk.CreateCommandPool(device, poolInfo, null, out var commandPool), nameof(vk.CreateCommandPool));
+    return commandPool;
+}
+var commandPool = CreateCommandPool();
+
+unsafe CommandBuffer[] CreateCommandBuffers()
+{
+    var commandBuffers = new CommandBuffer[framebuffers.Length];
+
+    CommandBufferAllocateInfo allocInfo = new()
+    {
+        SType = StructureType.CommandBufferAllocateInfo,
+        CommandPool = commandPool,
+        Level = CommandBufferLevel.Primary,
+        CommandBufferCount = (uint)commandBuffers.Length,
+    };
+
+    fixed (CommandBuffer* commandBuffersPtr = commandBuffers)
+        CheckResult(vk.AllocateCommandBuffers(device, allocInfo, commandBuffersPtr), nameof(vk.AllocateCommandBuffers));
+
+    for (int i = 0; i < commandBuffers.Length; i++)
+    {
+        CommandBufferBeginInfo beginInfo = new()
+        {
+            SType = StructureType.CommandBufferBeginInfo,
+        };
+
+        CheckResult(vk.BeginCommandBuffer(commandBuffers[i], beginInfo), nameof(vk.BeginCommandBuffer));
+
+        RenderPassBeginInfo renderPassInfo = new()
+        {
+            SType = StructureType.RenderPassBeginInfo,
+            RenderPass = renderPass,
+            Framebuffer = framebuffers[i],
+            RenderArea =
+            {
+                Offset = { X = 0, Y = 0 },
+                Extent = swapChainExtent,
+            }
+        };
+
+        ClearValue clearColor = new()
+        {
+            Color = new() { Float32_0 = 0, Float32_1 = 0, Float32_2 = 0, Float32_3 = 1 },
+        };
+
+        renderPassInfo.ClearValueCount = 1;
+        renderPassInfo.PClearValues = &clearColor;
+
+        vk.CmdBeginRenderPass(commandBuffers[i], &renderPassInfo, SubpassContents.Inline);
+
+        vk.CmdBindPipeline(commandBuffers[i], PipelineBindPoint.Graphics, pipeline);
+
+        vk.CmdDraw(commandBuffers[i], 3, 1, 0, 0);
+
+        vk.CmdEndRenderPass(commandBuffers[i]);
+
+        CheckResult(vk.EndCommandBuffer(commandBuffers[i]), nameof(vk.EndCommandBuffer));
+    }
+
+    return commandBuffers;
+}
+var commandBuffers = CreateCommandBuffers();
+
+const int MAX_FRAMES_IN_FLIGHT = 2;
+
+unsafe (Semaphore[], Semaphore[], Fence[], Fence[]) CreateSyncObjects()
+{
+    var imageAvailableSemaphores = new Semaphore[MAX_FRAMES_IN_FLIGHT];
+    var renderFinishedSemaphores = new Semaphore[MAX_FRAMES_IN_FLIGHT];
+    var inFlightFences = new Fence[MAX_FRAMES_IN_FLIGHT];
+    var imagesInFlight = new Fence[swapChainImages.Length];
+
+    SemaphoreCreateInfo semaphoreInfo = new()
+    {
+        SType = StructureType.SemaphoreCreateInfo,
+    };
+
+    FenceCreateInfo fenceInfo = new()
+    {
+        SType = StructureType.FenceCreateInfo,
+        Flags = FenceCreateFlags.SignaledBit,
+    };
+
+    for (var i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        CheckResult(vk.CreateSemaphore(device, semaphoreInfo, null, out imageAvailableSemaphores[i]), nameof(vk.CreateSemaphore));
+        CheckResult(vk.CreateSemaphore(device, semaphoreInfo, null, out renderFinishedSemaphores[i]), nameof(vk.CreateSemaphore));
+        CheckResult(vk.CreateFence(device, fenceInfo, null, out inFlightFences[i]), nameof(vk.CreateFence));
+    }
+    return (imageAvailableSemaphores, renderFinishedSemaphores, inFlightFences, imagesInFlight);
+}
+var (imageAvailableSemaphores, renderFinishedSemaphores, inFlightFences, imagesInFlight) = CreateSyncObjects();
+
+int currentFrame = 0;
+unsafe void DrawFrame(double delta)
+{
+    vk.WaitForFences(device, 1, inFlightFences[currentFrame], true, ulong.MaxValue);
+
+    uint imageIndex = 0;
+    khrSwapChain.AcquireNextImage(device, swapChain, ulong.MaxValue, imageAvailableSemaphores[currentFrame], default, ref imageIndex);
+
+    if (imagesInFlight[imageIndex].Handle != default)
+    {
+        vk.WaitForFences(device, 1, imagesInFlight[imageIndex], true, ulong.MaxValue);
+    }
+    imagesInFlight[imageIndex] = inFlightFences[currentFrame];
+
+    SubmitInfo submitInfo = new()
+    {
+        SType = StructureType.SubmitInfo,
+    };
+
+    var waitSemaphores = stackalloc[] { imageAvailableSemaphores[currentFrame] };
+    var waitStages = stackalloc[] { PipelineStageFlags.ColorAttachmentOutputBit };
+
+    var buffer = commandBuffers[imageIndex];
+
+    submitInfo = submitInfo with
+    {
+        WaitSemaphoreCount = 1,
+        PWaitSemaphores = waitSemaphores,
+        PWaitDstStageMask = waitStages,
+
+        CommandBufferCount = 1,
+        PCommandBuffers = &buffer
+    };
+
+    var signalSemaphores = stackalloc[] { renderFinishedSemaphores[currentFrame] };
+    submitInfo = submitInfo with
+    {
+        SignalSemaphoreCount = 1,
+        PSignalSemaphores = signalSemaphores,
+    };
+
+    vk.ResetFences(device, 1, inFlightFences[currentFrame]);
+
+    CheckResult(vk.QueueSubmit(graphicsQueue, 1, submitInfo, inFlightFences[currentFrame]), nameof(vk.QueueSubmit));
+
+    var swapChains = stackalloc[] { swapChain };
+    PresentInfoKHR presentInfo = new()
+    {
+        SType = StructureType.PresentInfoKhr,
+
+        WaitSemaphoreCount = 1,
+        PWaitSemaphores = signalSemaphores,
+
+        SwapchainCount = 1,
+        PSwapchains = swapChains,
+
+        PImageIndices = &imageIndex
+    };
+
+    khrSwapChain.QueuePresent(presentQueue, presentInfo);
+
+    currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+}
+window.Render += DrawFrame;
 
 window.Run();
 
 unsafe {
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        vk.DestroySemaphore(device, renderFinishedSemaphores[i], null);
+        vk.DestroySemaphore(device, imageAvailableSemaphores[i], null);
+        vk.DestroyFence(device, inFlightFences[i], null);
+    }
+    vk.DestroyCommandPool(device, commandPool, null);
+    foreach (var buffer in framebuffers)
+        vk.DestroyFramebuffer(device, buffer, null);
+    vk.DestroyPipelineLayout(device, pipelineLayout, null);
+    vk.DestroyRenderPass(device, renderPass, null);
     foreach (var imageView in swapChainImageViews)
         vk.DestroyImageView(device, imageView, null);
     khrSwapChain.DestroySwapchain(device, swapChain, null);
