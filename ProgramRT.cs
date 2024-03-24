@@ -11,9 +11,11 @@ using Silk.NET.Input;
 using Silk.NET.Maths;
 using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.KHR;
+using Silk.NET.Vulkan.Extensions;
 using Silk.NET.Windowing;
 
 using Buffer = Silk.NET.Vulkan.Buffer;
+using Silk.NET.Vulkan.Extensions.EXT;
 
 void CheckResult(Result result, string methodName)
 {
@@ -47,6 +49,11 @@ if (window.VkSurface is null)
 
 var vk = Vk.GetApi();
 
+string[] validationLayers = [
+    "VK_LAYER_KHRONOS_validation"
+];
+const bool EnableValidationLayers = true;
+
 unsafe Instance CreateInstance()
 {
     ApplicationInfo appInfo = new()
@@ -59,20 +66,88 @@ unsafe Instance CreateInstance()
         ApiVersion = Vk.Version13
     };
 
+    string[] extensions = SilkMarshal.PtrToStringArray(
+        (nint)window.VkSurface.GetRequiredExtensions(out var windowExtCount), (int)windowExtCount);
+    extensions = extensions.Append(ExtDebugUtils.ExtensionName).ToArray();
+
     InstanceCreateInfo createInfo = new()
     {
         SType = StructureType.InstanceCreateInfo,
         PApplicationInfo = &appInfo,
         EnabledLayerCount = 0,
+        PpEnabledExtensionNames = (byte**)SilkMarshal.StringArrayToPtr(extensions),
+        EnabledExtensionCount = (uint)extensions.Length,
     };
-    createInfo.PpEnabledExtensionNames = window.VkSurface.GetRequiredExtensions(out createInfo.EnabledExtensionCount);
 
-    var result = vk.CreateInstance(createInfo, null, out var instance);
-    if (result != Result.Success)
-        throw new Exception($"CreateInstance failed with code {result}");
+    uint DebugCallback(DebugUtilsMessageSeverityFlagsEXT severity, DebugUtilsMessageTypeFlagsEXT typeFlags, DebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData)
+    {
+        switch (severity)
+        {
+            case DebugUtilsMessageSeverityFlagsEXT.WarningBitExt:
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.Write("[WARN] ");
+                break;
 
+            case DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt:
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.Write("[ERROR] ");
+                break;
+
+            default:
+                return Vk.False;
+        }
+        Console.WriteLine(Marshal.PtrToStringAnsi((nint)pCallbackData->PMessage));
+        Console.ResetColor();
+        return Vk.False;
+    }
+
+    if (EnableValidationLayers)
+    {
+        createInfo.EnabledLayerCount = (uint)validationLayers.Length;
+        createInfo.PpEnabledLayerNames = (byte**)SilkMarshal.StringArrayToPtr(validationLayers);
+
+        DebugUtilsMessengerCreateInfoEXT debugCreateInfo = new()
+        {
+            SType = StructureType.DebugUtilsMessengerCreateInfoExt,
+            MessageSeverity = DebugUtilsMessageSeverityFlagsEXT.VerboseBitExt
+                | DebugUtilsMessageSeverityFlagsEXT.WarningBitExt
+                | DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt,
+            MessageType = DebugUtilsMessageTypeFlagsEXT.GeneralBitExt
+                | DebugUtilsMessageTypeFlagsEXT.PerformanceBitExt
+                | DebugUtilsMessageTypeFlagsEXT.ValidationBitExt,
+            PfnUserCallback = (DebugUtilsMessengerCallbackFunctionEXT)DebugCallback
+        };
+
+        createInfo.PNext = &debugCreateInfo;
+    }
+
+    CheckResult(vk.CreateInstance(createInfo, null, out var instance), nameof(vk.CreateInstance));
+
+    SilkMarshal.Free((nint)createInfo.PpEnabledExtensionNames);
     Marshal.FreeHGlobal((IntPtr)appInfo.PApplicationName);
     Marshal.FreeHGlobal((IntPtr)appInfo.PEngineName);
+    if (EnableValidationLayers)
+        SilkMarshal.Free((nint)createInfo.PpEnabledLayerNames);
+
+    if (EnableValidationLayers)
+    {
+        if (!vk.TryGetInstanceExtension(instance, out ExtDebugUtils debugUtils))
+            return instance;
+
+        DebugUtilsMessengerCreateInfoEXT dbgCreateInfo = new()
+        {
+            SType = StructureType.DebugUtilsMessengerCreateInfoExt,
+            MessageSeverity = DebugUtilsMessageSeverityFlagsEXT.VerboseBitExt
+                | DebugUtilsMessageSeverityFlagsEXT.WarningBitExt
+                | DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt,
+            MessageType = DebugUtilsMessageTypeFlagsEXT.GeneralBitExt
+                | DebugUtilsMessageTypeFlagsEXT.PerformanceBitExt
+                | DebugUtilsMessageTypeFlagsEXT.ValidationBitExt,
+            PfnUserCallback = (DebugUtilsMessengerCallbackFunctionEXT)DebugCallback
+        };
+
+        CheckResult(debugUtils.CreateDebugUtilsMessenger(instance, dbgCreateInfo, null, out var debugMessenger), nameof(debugUtils.CreateDebugUtilsMessenger));
+    }
 
     return instance;
 }
@@ -174,8 +249,6 @@ unsafe (Device, Queue, Queue) CreateLogicalDevice()
         };
     }
 
-    PhysicalDeviceFeatures deviceFeatures = new();
-
     string[] extensions = [
         KhrSwapchain.ExtensionName,
 
@@ -189,18 +262,53 @@ unsafe (Device, Queue, Queue) CreateLogicalDevice()
         "VK_KHR_shader_float_controls",
     ];
 
+
+    PhysicalDeviceBufferDeviceAddressFeatures addrFeatures = new()
+    {
+        SType = StructureType.PhysicalDeviceBufferDeviceAddressFeatures,
+        BufferDeviceAddress = true
+    };
+
+    PhysicalDeviceRayTracingPipelineFeaturesKHR enabledRayTracingPipelineFeatures = new()
+    {
+        SType = StructureType.PhysicalDeviceRayTracingPipelineFeaturesKhr,
+        RayTracingPipeline = true,
+        PNext = &addrFeatures
+    };
+
+    PhysicalDeviceAccelerationStructureFeaturesKHR enabledAccelerationStructureFeatures = new()
+    {
+        SType = StructureType.PhysicalDeviceAccelerationStructureFeaturesKhr,
+        AccelerationStructure = true,
+        PNext = &enabledRayTracingPipelineFeatures
+    };
+
+    PhysicalDeviceFeatures2 physicalDeviceFeatures2 = new()
+    {
+        SType = StructureType.PhysicalDeviceFeatures2,
+        PNext = &enabledAccelerationStructureFeatures,
+        Features = new PhysicalDeviceFeatures()
+    };
+
     DeviceCreateInfo createInfo = new()
     {
         SType = StructureType.DeviceCreateInfo,
         QueueCreateInfoCount = (uint)uniqueQueueFamilies.Length,
         PQueueCreateInfos = queueCreateInfos,
 
-        PEnabledFeatures = &deviceFeatures,
+        PEnabledFeatures = null,
+        PNext = &physicalDeviceFeatures2,
         EnabledLayerCount = 0,
 
         EnabledExtensionCount = (uint)extensions.Length,
         PpEnabledExtensionNames = (byte**)SilkMarshal.StringArrayToPtr(extensions)
     };
+
+    if (EnableValidationLayers)
+    {
+        createInfo.EnabledLayerCount = (uint)validationLayers.Length;
+        createInfo.PpEnabledLayerNames = (byte**)SilkMarshal.StringArrayToPtr(validationLayers);
+    }
 
     CheckResult(vk.CreateDevice(physicalDevice, in createInfo, null, out var device), nameof(vk.CreateDevice));
 
@@ -208,6 +316,8 @@ unsafe (Device, Queue, Queue) CreateLogicalDevice()
     vk.GetDeviceQueue(device, presentIdx, 0, out var presentQueue);
 
     SilkMarshal.Free((nint)createInfo.PpEnabledExtensionNames);
+    if (EnableValidationLayers)
+        SilkMarshal.Free((nint)createInfo.PpEnabledLayerNames);
 
     return (device, graphicsQueue, presentQueue);
 }
@@ -1146,34 +1256,28 @@ if (!vk.TryGetDeviceExtension(instance, device, out KhrRayTracingPipeline rayPip
 
 unsafe Pipeline CreateRayTracingPipeline()
 {
-    DescriptorSetLayoutBinding accelLayoutBinding = new()
-    {
-        Binding = 0,
-        DescriptorType = DescriptorType.AccelerationStructureKhr,
-        DescriptorCount = 1,
-        StageFlags = ShaderStageFlags.RaygenBitKhr,
-    };
-
-    DescriptorSetLayoutBinding resultImageLayoutBinding = new()
-    {
-        Binding = 1,
-        DescriptorType = DescriptorType.StorageImage,
-        DescriptorCount = 1,
-        StageFlags = ShaderStageFlags.RaygenBitKhr
-    };
-
-    DescriptorSetLayoutBinding uniformBufferBinding = new()
-    {
-        Binding = 2,
-        DescriptorType = DescriptorType.UniformBuffer,
-        DescriptorCount = 1,
-        StageFlags = ShaderStageFlags.RaygenBitKhr
-    };
-
-    var bindings = stackalloc[] {
-        accelLayoutBinding,
-        resultImageLayoutBinding,
-        // uniformBufferBinding
+    var bindings = stackalloc DescriptorSetLayoutBinding[] {
+        new()
+        {
+            Binding = 0,
+            DescriptorType = DescriptorType.AccelerationStructureKhr,
+            DescriptorCount = 1,
+            StageFlags = ShaderStageFlags.RaygenBitKhr,
+        },
+        new()
+        {
+            Binding = 1,
+            DescriptorType = DescriptorType.StorageImage,
+            DescriptorCount = 1,
+            StageFlags = ShaderStageFlags.RaygenBitKhr
+        },
+        // new()
+        // {
+        //     Binding = 2,
+        //     DescriptorType = DescriptorType.UniformBuffer,
+        //     DescriptorCount = 1,
+        //     StageFlags = ShaderStageFlags.RaygenBitKhr
+        // }
     };
     uint numBindings = 2; // TODO don't forget to update in tandem
     DescriptorSetLayoutCreateInfo descSetCreateInfo = new()
@@ -1193,8 +1297,10 @@ unsafe Pipeline CreateRayTracingPipeline()
     CheckResult(vk.CreatePipelineLayout(device, pipelineLayoutCI, null, out var pipelineLayout), nameof(vk.CreatePipelineLayout));
 
     uint i = 0;
-    List<PipelineShaderStageCreateInfo> shaderStages = [];
-    List<RayTracingShaderGroupCreateInfoKHR> shaderGroups = [];
+    uint numStages = 3;
+    uint groupCount = numStages;
+    var shaderStages = stackalloc PipelineShaderStageCreateInfo[(int)numStages];
+    var shaderGroups = stackalloc RayTracingShaderGroupCreateInfoKHR[(int)numStages];
 
     {
         var module = CreateShaderModule(CompileShader(
@@ -1228,15 +1334,15 @@ unsafe Pipeline CreateRayTracingPipeline()
             """, "rgen"
         ));
 
-        shaderStages.Add(new()
+        shaderStages[i] = new()
         {
             SType = StructureType.PipelineShaderStageCreateInfo,
             Stage = ShaderStageFlags.VertexBit,
             Module = module,
             PName = (byte*)SilkMarshal.StringToPtr("main")
-        });
+        };
 
-        shaderGroups.Add(new()
+        shaderGroups[i] = new()
         {
             SType = StructureType.RayTracingShaderGroupCreateInfoKhr,
             Type = RayTracingShaderGroupTypeKHR.GeneralKhr,
@@ -1244,7 +1350,7 @@ unsafe Pipeline CreateRayTracingPipeline()
             ClosestHitShader = VK_SHADER_UNUSED_KHR,
             AnyHitShader = VK_SHADER_UNUSED_KHR,
             IntersectionShader = VK_SHADER_UNUSED_KHR
-        });
+        };
 
         ++i;
     }
@@ -1264,15 +1370,15 @@ unsafe Pipeline CreateRayTracingPipeline()
             """, "rmiss"
         ));
 
-        shaderStages.Add(new()
+        shaderStages[i] = new()
         {
             SType = StructureType.PipelineShaderStageCreateInfo,
             Stage = ShaderStageFlags.VertexBit,
             Module = module,
             PName = (byte*)SilkMarshal.StringToPtr("main")
-        });
+        };
 
-        shaderGroups.Add(new()
+        shaderGroups[i] = new()
         {
             SType = StructureType.RayTracingShaderGroupCreateInfoKhr,
             Type = RayTracingShaderGroupTypeKHR.GeneralKhr,
@@ -1280,7 +1386,7 @@ unsafe Pipeline CreateRayTracingPipeline()
             ClosestHitShader = VK_SHADER_UNUSED_KHR,
             AnyHitShader = VK_SHADER_UNUSED_KHR,
             IntersectionShader = VK_SHADER_UNUSED_KHR
-        });
+        };
 
         ++i;
     }
@@ -1303,44 +1409,39 @@ unsafe Pipeline CreateRayTracingPipeline()
             """, "rchit"
         ));
 
-        shaderStages.Add(new()
+        shaderStages[i] = new()
         {
             SType = StructureType.PipelineShaderStageCreateInfo,
             Stage = ShaderStageFlags.VertexBit,
             Module = module,
             PName = (byte*)SilkMarshal.StringToPtr("main")
-        });
+        };
 
-        shaderGroups.Add(new()
+        shaderGroups[i] = new()
         {
             SType = StructureType.RayTracingShaderGroupCreateInfoKhr,
-            Type = RayTracingShaderGroupTypeKHR.GeneralKhr,
+            Type = RayTracingShaderGroupTypeKHR.TrianglesHitGroupKhr,
             GeneralShader = VK_SHADER_UNUSED_KHR,
             ClosestHitShader = i,
             AnyHitShader = VK_SHADER_UNUSED_KHR,
             IntersectionShader = VK_SHADER_UNUSED_KHR
-        });
+        };
 
         ++i;
     }
 
-    Pipeline pipeline;
-    fixed(PipelineShaderStageCreateInfo* stages = shaderStages.ToArray())
-        fixed(RayTracingShaderGroupCreateInfoKHR* groups = shaderGroups.ToArray())
-        {
-            RayTracingPipelineCreateInfoKHR rayTracingPipelineCI = new()
-            {
-                SType = StructureType.RayTracingPipelineCreateInfoKhr,
-                StageCount = (uint)shaderStages.Count,
-                PStages = stages,
-                GroupCount = (uint)shaderGroups.Count,
-                PGroups = groups,
-                MaxPipelineRayRecursionDepth = 1,
-                Layout = pipelineLayout
-            };
-            CheckResult(rayPipe.CreateRayTracingPipelines(device, new DeferredOperationKHR(), new PipelineCache(),
-                1, &rayTracingPipelineCI, null, out pipeline), nameof(rayPipe.CreateRayTracingPipelines));
-        }
+    RayTracingPipelineCreateInfoKHR rayTracingPipelineCI = new()
+    {
+        SType = StructureType.RayTracingPipelineCreateInfoKhr,
+        StageCount = numStages,
+        PStages = shaderStages,
+        GroupCount = groupCount,
+        PGroups = shaderGroups,
+        MaxPipelineRayRecursionDepth = 1,
+        Layout = pipelineLayout
+    };
+    CheckResult(rayPipe.CreateRayTracingPipelines(device, new DeferredOperationKHR(), new PipelineCache(),
+        1, &rayTracingPipelineCI, null, out var pipeline), nameof(rayPipe.CreateRayTracingPipelines));
 
     // Create the shader binding table
     PhysicalDeviceRayTracingPipelinePropertiesKHR rtPipeProps = new() {
@@ -1357,7 +1458,6 @@ unsafe Pipeline CreateRayTracingPipeline()
 
     uint handleSize = rtPipeProps.ShaderGroupHandleSize;
     uint handleSizeAligned = AlignedSize(rtPipeProps.ShaderGroupHandleSize, rtPipeProps.ShaderGroupHandleAlignment);
-    uint groupCount = (uint)shaderGroups.Count;
     uint sbtSize = groupCount * handleSizeAligned;
 
     byte[] shaderHandleStorage = new byte[sbtSize];
