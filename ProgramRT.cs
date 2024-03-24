@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Numerics;
@@ -367,36 +368,50 @@ unsafe RenderPass CreateRenderPass()
 }
 var renderPass = CreateRenderPass();
 
-unsafe (Pipeline, PipelineLayout) CreatePipeline()
+unsafe ShaderModule CreateShaderModule(byte[] code)
 {
-    ShaderModule CreateShaderModule(byte[] code)
+    fixed (byte* codePtr = code)
     {
-        fixed (byte* codePtr = code)
+        ShaderModuleCreateInfo createInfo = new()
         {
-            ShaderModuleCreateInfo createInfo = new()
-            {
-                SType = StructureType.ShaderModuleCreateInfo,
-                CodeSize = (nuint)code.Length,
-                PCode = (uint*)codePtr
-            };
-            CheckResult(vk.CreateShaderModule(device, createInfo, null, out var shaderModule), nameof(vk.CreateShaderModule));
-            return shaderModule;
-        }
+            SType = StructureType.ShaderModuleCreateInfo,
+            CodeSize = (nuint)code.Length,
+            PCode = (uint*)codePtr
+        };
+        CheckResult(vk.CreateShaderModule(device, createInfo, null, out var shaderModule), nameof(vk.CreateShaderModule));
+        return shaderModule;
     }
+}
 
-    byte[] CompileShader(string code, string ext)
+byte[] CompileShader(string code, string ext)
+{
+    var guid = Guid.NewGuid();
+    string infile = $"{guid}.{ext}";
+    string outfile = $"{guid}.spv";
+
+    File.WriteAllText(infile, code);
+
+    byte[] bytes = null;
+    try
     {
         string glslcExe = "glslc"; // TODO assumes it is in the path - better solution?
-        string infile = $"{Guid.NewGuid()}.{ext}";
-        File.WriteAllText(infile, code);
-        string outfile = $"{Guid.NewGuid()}.spv";
-        System.Diagnostics.Process.Start(glslcExe, [infile, "-o", outfile]).WaitForExit();
-        var bytes = File.ReadAllBytes(outfile);
-        File.Delete(infile);
-        File.Delete(outfile);
-        return bytes;
+        var p = System.Diagnostics.Process.Start(glslcExe, ["--target-env=vulkan1.3", infile, "-o", outfile]);
+        p.WaitForExit();
+        if (p.ExitCode != 0)
+            throw new Exception("glslc shader compilation failed");
+        bytes = File.ReadAllBytes(outfile);
+    }
+    finally
+    {
+        if (File.Exists(infile)) File.Delete(infile);
+        if (File.Exists(outfile)) File.Delete(outfile);
     }
 
+    return bytes;
+}
+
+unsafe (Pipeline, PipelineLayout) CreatePipeline()
+{
     var vertShaderModule = CreateShaderModule(CompileShader(
         """
         #version 450
@@ -761,6 +776,49 @@ unsafe (Buffer Buffer, DeviceMemory Memory, ulong DeviceAddress) CreateScratchBu
     return (buffer, memory, deviceAddress);
 }
 
+unsafe CommandBuffer StartOneTimeCommand()
+{
+    CommandBufferAllocateInfo allocInfo = new()
+    {
+        SType = StructureType.CommandBufferAllocateInfo,
+        CommandPool = commandPool,
+        Level = CommandBufferLevel.Primary,
+        CommandBufferCount = 1,
+    };
+    CheckResult(vk.AllocateCommandBuffers(device, allocInfo, out var commandBuffer), nameof(vk.AllocateCommandBuffers));
+
+    CommandBufferBeginInfo cmdBufInfo = new() {
+        SType = StructureType.CommandBufferBeginInfo,
+        Flags = CommandBufferUsageFlags.OneTimeSubmitBit
+    };
+    CheckResult(vk.BeginCommandBuffer(commandBuffer, &cmdBufInfo), nameof(vk.BeginCommandBuffer));
+
+    return commandBuffer;
+}
+
+unsafe void RunAndDeleteOneTimeCommand(CommandBuffer commandBuffer, Queue queue)
+{
+    CheckResult(vk.EndCommandBuffer(commandBuffer), nameof(vk.EndCommandBuffer));
+
+    SubmitInfo submitInfo = new() {
+        SType = StructureType.SubmitInfo,
+        CommandBufferCount = 1,
+        PCommandBuffers = &commandBuffer,
+    };
+
+    FenceCreateInfo fenceInfo = new() {
+        SType = StructureType.FenceCreateInfo,
+        Flags = FenceCreateFlags.None,
+    };
+    CheckResult(vk.CreateFence(device, fenceInfo, null, out var fence), nameof(vk.CreateFence));
+
+    CheckResult(vk.QueueSubmit(queue, 1, &submitInfo, fence), nameof(vk.QueueSubmit));
+    CheckResult(vk.WaitForFences(device, 1, &fence, true, ulong.MaxValue), nameof(vk.WaitForFences));
+
+    vk.DestroyFence(device, fence, null);
+    vk.FreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+}
+
 unsafe ulong CreateBottomLevelAccelerationStructure()
 {
     Vector3[] vertices = [
@@ -844,21 +902,18 @@ unsafe ulong CreateBottomLevelAccelerationStructure()
 
     var scratchBuffer = CreateScratchBuffer(buildSizeInfo.BuildScratchSize);
 
-    AccelerationStructureBuildGeometryInfoKHR accelerationBuildGeometryInfo = new()
+    accelBuildGeometryInfo = accelBuildGeometryInfo with
     {
-        SType = StructureType.AccelerationStructureBuildGeometryInfoKhr,
-        Type = AccelerationStructureTypeKHR.BottomLevelKhr,
-        Flags = BuildAccelerationStructureFlagsKHR.PreferFastTraceBitKhr,
         Mode = BuildAccelerationStructureModeKHR.BuildKhr,
         DstAccelerationStructure = bottomLvlAccelHandle,
-        GeometryCount = 1,
         PGeometries = &accelerationStructureGeometry,
-        ScratchData = new() {
+        ScratchData = new()
+        {
             DeviceAddress = scratchBuffer.DeviceAddress
         }
     };
 
-    AccelerationStructureBuildRangeInfoKHR accelerationStructureBuildRangeInfo = new()
+    AccelerationStructureBuildRangeInfoKHR accelBuildRange = new()
     {
         PrimitiveCount = numTriangles,
         PrimitiveOffset = 0,
@@ -866,44 +921,13 @@ unsafe ulong CreateBottomLevelAccelerationStructure()
         TransformOffset = 0
     };
 
-    CommandBufferAllocateInfo allocInfo = new()
-    {
-        SType = StructureType.CommandBufferAllocateInfo,
-        CommandPool = commandPool,
-        Level = CommandBufferLevel.Primary,
-        CommandBufferCount = 1,
-    };
-    CheckResult(vk.AllocateCommandBuffers(device, allocInfo, out var commandBuffer), nameof(vk.AllocateCommandBuffers));
-
-    CommandBufferBeginInfo cmdBufInfo = new() {
-        SType = StructureType.CommandBufferBeginInfo,
-        Flags = CommandBufferUsageFlags.OneTimeSubmitBit
-    };
-    CheckResult(vk.BeginCommandBuffer(commandBuffer, &cmdBufInfo), nameof(vk.BeginCommandBuffer));
+    var commandBuffer = StartOneTimeCommand();
 
     var buildInfoArray = stackalloc[] { accelBuildGeometryInfo };
-    var buildRangeInfoArray = stackalloc[] { &accelerationStructureBuildRangeInfo };
+    var buildRangeInfoArray = stackalloc[] { &accelBuildRange };
     accel.CmdBuildAccelerationStructures(commandBuffer, 1, buildInfoArray, buildRangeInfoArray);
 
-    CheckResult(vk.EndCommandBuffer(commandBuffer), nameof(vk.EndCommandBuffer));
-
-    SubmitInfo submitInfo = new() {
-        SType = StructureType.SubmitInfo,
-        CommandBufferCount = 1,
-        PCommandBuffers = &commandBuffer,
-    };
-
-    FenceCreateInfo fenceInfo = new() {
-        SType = StructureType.FenceCreateInfo,
-        Flags = FenceCreateFlags.None,
-    };
-    CheckResult(vk.CreateFence(device, fenceInfo, null, out var fence), nameof(vk.CreateFence));
-
-    CheckResult(vk.QueueSubmit(graphicsQueue, 1, &submitInfo, fence), nameof(vk.QueueSubmit));
-    CheckResult(vk.WaitForFences(device, 1, &fence, true, ulong.MaxValue), nameof(vk.WaitForFences));
-
-    vk.DestroyFence(device, fence, null);
-    vk.FreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+    RunAndDeleteOneTimeCommand(commandBuffer, graphicsQueue);
 
     AccelerationStructureDeviceAddressInfoKHR accelerationDeviceAddressInfo = new()
     {
@@ -920,7 +944,7 @@ var bottomLevelAccelDeviceAddress = CreateBottomLevelAccelerationStructure();
 
 // TODO free bottom level accel buffers etc.
 
-unsafe ulong CreateTopLevelAccelerationStructure()
+unsafe (AccelerationStructureKHR , ulong) CreateTopLevelAccelerationStructure()
 {
     TransformMatrixKHR matrix;
     new Span<float>(matrix.Matrix, 12).Clear();
@@ -938,7 +962,7 @@ unsafe ulong CreateTopLevelAccelerationStructure()
         AccelerationStructureReference = bottomLevelAccelDeviceAddress
     };
 
-    Span<AccelerationStructureInstanceKHR> instances = stackalloc[] { instance };
+    Span<AccelerationStructureInstanceKHR> instances = [ instance ];
     var instancesBuffer = CreateBuffer(
         BufferUsageFlags.ShaderDeviceAddressBit | BufferUsageFlags.AccelerationStructureBuildInputReadOnlyBitKhr,
         MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
@@ -992,66 +1016,452 @@ unsafe ulong CreateTopLevelAccelerationStructure()
         FirstVertex = 0,
         TransformOffset = 0
     };
-    // Span<AccelerationStructureBuildRangeInfoKHR*> accelBuildRangeInfos = stackalloc[] { &accelerationStructureBuildRangeInfo };
 
-    CommandBufferAllocateInfo allocInfo = new()
-    {
-        SType = StructureType.CommandBufferAllocateInfo,
-        CommandPool = commandPool,
-        Level = CommandBufferLevel.Primary,
-        CommandBufferCount = 1,
-    };
-    CheckResult(vk.AllocateCommandBuffers(device, allocInfo, out var commandBuffer), nameof(vk.AllocateCommandBuffers));
-
-    CommandBufferBeginInfo cmdBufInfo = new() {
-        SType = StructureType.CommandBufferBeginInfo,
-        Flags = CommandBufferUsageFlags.OneTimeSubmitBit
-    };
-    CheckResult(vk.BeginCommandBuffer(commandBuffer, &cmdBufInfo), nameof(vk.BeginCommandBuffer));
+    var commandBuffer = StartOneTimeCommand();
 
     var buildInfoArray = stackalloc[] { accelBuildGeometryInfo };
     var buildRangeInfoArray = stackalloc[] { &accelerationStructureBuildRangeInfo };
     accel.CmdBuildAccelerationStructures(commandBuffer, 1, buildInfoArray, buildRangeInfoArray);
 
-    CheckResult(vk.EndCommandBuffer(commandBuffer), nameof(vk.EndCommandBuffer));
-
-    SubmitInfo submitInfo = new() {
-        SType = StructureType.SubmitInfo,
-        CommandBufferCount = 1,
-        PCommandBuffers = &commandBuffer,
-    };
-
-    FenceCreateInfo fenceInfo = new() {
-        SType = StructureType.FenceCreateInfo,
-        Flags = FenceCreateFlags.None,
-    };
-    CheckResult(vk.CreateFence(device, fenceInfo, null, out var fence), nameof(vk.CreateFence));
-
-    CheckResult(vk.QueueSubmit(graphicsQueue, 1, &submitInfo, fence), nameof(vk.QueueSubmit));
-    CheckResult(vk.WaitForFences(device, 1, &fence, true, ulong.MaxValue), nameof(vk.WaitForFences));
-
-    vk.DestroyFence(device, fence, null);
-    vk.FreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+    RunAndDeleteOneTimeCommand(commandBuffer, graphicsQueue);
 
     AccelerationStructureDeviceAddressInfoKHR accelerationDeviceAddressInfo = new()
     {
         SType = StructureType.AccelerationStructureDeviceAddressInfoKhr,
         AccelerationStructure = topLevelAccel
     };
-
     var deviceAddress = accel.GetAccelerationStructureDeviceAddress(device, &accelerationDeviceAddressInfo);
 
     DeleteBuffer(scratchBuffer.Memory, scratchBuffer.Buffer);
 
-    return deviceAddress;
+    return (topLevelAccel, deviceAddress);
 }
-var topLevelAccelDeviceAddress = CreateTopLevelAccelerationStructure();
+var (topLevelAccel, topLevelAccelDeviceAddress) = CreateTopLevelAccelerationStructure();
+// TODO free top level accel data
 
-// createStorageImage();
-// createUniformBuffer();
-// createRayTracingPipeline();
-// createShaderBindingTable();
-// createDescriptorSets();
+// TODO recreate storage image upon resize
+// TODO clean up storage image
+
+unsafe (Image, ImageView) CreateStorageImage()
+{
+    // TODO is this format always supported?
+    const Format colorFormat = Format.R32G32B32A32Sfloat;
+
+    ImageCreateInfo createInfo = new()
+    {
+        ImageType = ImageType.Type2D,
+        Format = colorFormat,
+        Extent = new() {
+            Width = (uint)window.FramebufferSize.X,
+            Height = (uint)window.FramebufferSize.Y,
+            Depth = 1
+        },
+        MipLevels = 1,
+        ArrayLayers = 1,
+        Samples = SampleCountFlags.Count1Bit,
+        Tiling = ImageTiling.Optimal,
+        Usage = ImageUsageFlags.TransferSrcBit | ImageUsageFlags.StorageBit,
+        InitialLayout = ImageLayout.Undefined
+    };
+    CheckResult(vk.CreateImage(device, &createInfo, null, out var image), nameof(vk.CreateImage));
+
+    vk.GetImageMemoryRequirements(device, image, out var memReqs);
+    MemoryAllocateInfo memoryAllocateInfo = new() {
+        SType = StructureType.MemoryAllocateInfo,
+        AllocationSize = memReqs.Size,
+        MemoryTypeIndex = GetMemoryTypeIdx(memReqs.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit).Value
+    };
+
+    CheckResult(vk.AllocateMemory(device, &memoryAllocateInfo, null, out var memory), nameof(vk.AllocateMemory));
+    CheckResult(vk.BindImageMemory(device, image, memory, 0), nameof(vk.BindImageMemory));
+
+    ImageViewCreateInfo imageView = new()
+    {
+        SType = StructureType.ImageViewCreateInfo,
+        ViewType = ImageViewType.Type2D,
+        Format = colorFormat,
+        SubresourceRange = new() {
+            AspectMask =  ImageAspectFlags.ColorBit,
+            BaseMipLevel = 0,
+            LevelCount = 1,
+            BaseArrayLayer = 0,
+            LayerCount = 1,
+        },
+        Image = image
+    };
+    CheckResult(vk.CreateImageView(device, &imageView, null, out var view), nameof(vk.CreateImageView));
+
+    var commandBuffer = StartOneTimeCommand();
+
+    ImageSubresourceRange subresourceRange = new()
+    {
+        AspectMask = ImageAspectFlags.ColorBit,
+        BaseMipLevel = 0,
+        LevelCount = 1,
+        LayerCount = 1
+    };
+
+    ImageMemoryBarrier imageMemoryBarrier = new()
+    {
+        SType = StructureType.ImageMemoryBarrier,
+        OldLayout = ImageLayout.Undefined,
+        NewLayout = ImageLayout.General,
+        Image = image,
+        SubresourceRange = subresourceRange
+    };
+
+    vk.CmdPipelineBarrier(commandBuffer, PipelineStageFlags.AllCommandsBit, PipelineStageFlags.AllCommandsBit,
+        0, 0, null, 0, null, 1, &imageMemoryBarrier);
+
+    RunAndDeleteOneTimeCommand(commandBuffer, graphicsQueue);
+
+    return (image, view);
+}
+var (storageImage, storageImageView) = CreateStorageImage();
+
+// TODO do we need to release some memory for the storage image?
+// TODO resize / recreate storage image upon window resize
+
+unsafe void CreateUniformBuffer()
+{
+    // TODO this is where we create buffers for shader uniforms (e.g., camera and light source data)
+
+    // VK_CHECK_RESULT(vulkanDevice->createBuffer(
+    //     VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    //     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+    //     &ubo,
+    //     sizeof(uniformData),
+    //     &uniformData));
+    // VK_CHECK_RESULT(ubo.map());
+
+    // uniformData.projInverse = glm::inverse(camera.matrices.perspective);
+    // uniformData.viewInverse = glm::inverse(camera.matrices.view);
+    // memcpy(ubo.mapped, &uniformData, sizeof(uniformData));
+}
+CreateUniformBuffer();
+
+const uint VK_SHADER_UNUSED_KHR = ~0U;
+if (!vk.TryGetDeviceExtension(instance, device, out KhrRayTracingPipeline rayPipe))
+    throw new NotSupportedException($"{KhrRayTracingPipeline.ExtensionName} extension not found.");
+
+unsafe Pipeline CreateRayTracingPipeline()
+{
+    DescriptorSetLayoutBinding accelLayoutBinding = new()
+    {
+        Binding = 0,
+        DescriptorType = DescriptorType.AccelerationStructureKhr,
+        DescriptorCount = 1,
+        StageFlags = ShaderStageFlags.RaygenBitKhr,
+    };
+
+    DescriptorSetLayoutBinding resultImageLayoutBinding = new()
+    {
+        Binding = 1,
+        DescriptorType = DescriptorType.StorageImage,
+        DescriptorCount = 1,
+        StageFlags = ShaderStageFlags.RaygenBitKhr
+    };
+
+    DescriptorSetLayoutBinding uniformBufferBinding = new()
+    {
+        Binding = 2,
+        DescriptorType = DescriptorType.UniformBuffer,
+        DescriptorCount = 1,
+        StageFlags = ShaderStageFlags.RaygenBitKhr
+    };
+
+    var bindings = stackalloc[] {
+        accelLayoutBinding,
+        resultImageLayoutBinding,
+        // uniformBufferBinding
+    };
+    uint numBindings = 2; // TODO don't forget to update in tandem
+    DescriptorSetLayoutCreateInfo descSetCreateInfo = new()
+    {
+        SType =  StructureType.DescriptorSetLayoutCreateInfo,
+        BindingCount = numBindings,
+        PBindings = bindings
+    };
+    CheckResult(vk.CreateDescriptorSetLayout(device, descSetCreateInfo, null, out var descriptorSetLayout), nameof(vk.CreateDescriptorSetLayout));
+
+    PipelineLayoutCreateInfo pipelineLayoutCI = new()
+    {
+        SType = StructureType.PipelineLayoutCreateInfo,
+        SetLayoutCount = 1,
+        PSetLayouts = &descriptorSetLayout
+    };
+    CheckResult(vk.CreatePipelineLayout(device, pipelineLayoutCI, null, out var pipelineLayout), nameof(vk.CreatePipelineLayout));
+
+    uint i = 0;
+    List<PipelineShaderStageCreateInfo> shaderStages = [];
+    List<RayTracingShaderGroupCreateInfoKHR> shaderGroups = [];
+
+    {
+        var module = CreateShaderModule(CompileShader(
+            """
+            #version 460
+            #extension GL_EXT_ray_tracing : enable
+
+            layout(binding = 0, set = 0) uniform accelerationStructureEXT topLevelAS;
+            layout(binding = 1, set = 0, rgba8) uniform image2D image;
+
+            layout(location = 0) rayPayloadEXT vec3 hitValue;
+
+            void main()
+            {
+                const vec2 pixelCenter = vec2(gl_LaunchIDEXT.xy) + vec2(0.5);
+                const vec2 inUV = pixelCenter/vec2(gl_LaunchSizeEXT.xy);
+                vec2 d = inUV * 2.0 - 1.0;
+
+                vec4 origin = vec4(0, 0, 0, 1);
+                vec4 direction = vec4(0, 0, 1, 1);
+
+                float tmin = 0.0;
+                float tmax = 10000.0;
+
+                hitValue = vec3(0.0);
+
+                traceRayEXT(topLevelAS, gl_RayFlagsOpaqueEXT, 0xff, 0, 0, 0, origin.xyz, tmin, direction.xyz, tmax, 0);
+
+                imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(hitValue, 0.0));
+            }
+            """, "rgen"
+        ));
+
+        shaderStages.Add(new()
+        {
+            SType = StructureType.PipelineShaderStageCreateInfo,
+            Stage = ShaderStageFlags.VertexBit,
+            Module = module,
+            PName = (byte*)SilkMarshal.StringToPtr("main")
+        });
+
+        shaderGroups.Add(new()
+        {
+            SType = StructureType.RayTracingShaderGroupCreateInfoKhr,
+            Type = RayTracingShaderGroupTypeKHR.GeneralKhr,
+            GeneralShader = i,
+            ClosestHitShader = VK_SHADER_UNUSED_KHR,
+            AnyHitShader = VK_SHADER_UNUSED_KHR,
+            IntersectionShader = VK_SHADER_UNUSED_KHR
+        });
+
+        ++i;
+    }
+
+    {
+        var module = CreateShaderModule(CompileShader(
+            """
+            #version 460
+            #extension GL_EXT_ray_tracing : enable
+
+            layout(location = 0) rayPayloadInEXT vec3 hitValue;
+
+            void main()
+            {
+                hitValue = vec3(0.0, 0.0, 0.2);
+            }
+            """, "rmiss"
+        ));
+
+        shaderStages.Add(new()
+        {
+            SType = StructureType.PipelineShaderStageCreateInfo,
+            Stage = ShaderStageFlags.VertexBit,
+            Module = module,
+            PName = (byte*)SilkMarshal.StringToPtr("main")
+        });
+
+        shaderGroups.Add(new()
+        {
+            SType = StructureType.RayTracingShaderGroupCreateInfoKhr,
+            Type = RayTracingShaderGroupTypeKHR.GeneralKhr,
+            GeneralShader = i,
+            ClosestHitShader = VK_SHADER_UNUSED_KHR,
+            AnyHitShader = VK_SHADER_UNUSED_KHR,
+            IntersectionShader = VK_SHADER_UNUSED_KHR
+        });
+
+        ++i;
+    }
+
+    {
+        var module = CreateShaderModule(CompileShader(
+            """
+            #version 460
+            #extension GL_EXT_ray_tracing : enable
+            #extension GL_EXT_nonuniform_qualifier : enable
+
+            layout(location = 0) rayPayloadInEXT vec3 hitValue;
+            hitAttributeEXT vec2 attribs;
+
+            void main()
+            {
+                const vec3 barycentricCoords = vec3(1.0f - attribs.x - attribs.y, attribs.x, attribs.y);
+                hitValue = barycentricCoords;
+            }
+            """, "rchit"
+        ));
+
+        shaderStages.Add(new()
+        {
+            SType = StructureType.PipelineShaderStageCreateInfo,
+            Stage = ShaderStageFlags.VertexBit,
+            Module = module,
+            PName = (byte*)SilkMarshal.StringToPtr("main")
+        });
+
+        shaderGroups.Add(new()
+        {
+            SType = StructureType.RayTracingShaderGroupCreateInfoKhr,
+            Type = RayTracingShaderGroupTypeKHR.GeneralKhr,
+            GeneralShader = VK_SHADER_UNUSED_KHR,
+            ClosestHitShader = i,
+            AnyHitShader = VK_SHADER_UNUSED_KHR,
+            IntersectionShader = VK_SHADER_UNUSED_KHR
+        });
+
+        ++i;
+    }
+
+    Pipeline pipeline;
+    fixed(PipelineShaderStageCreateInfo* stages = shaderStages.ToArray())
+        fixed(RayTracingShaderGroupCreateInfoKHR* groups = shaderGroups.ToArray())
+        {
+            RayTracingPipelineCreateInfoKHR rayTracingPipelineCI = new()
+            {
+                SType = StructureType.RayTracingPipelineCreateInfoKhr,
+                StageCount = (uint)shaderStages.Count,
+                PStages = stages,
+                GroupCount = (uint)shaderGroups.Count,
+                PGroups = groups,
+                MaxPipelineRayRecursionDepth = 1,
+                Layout = pipelineLayout
+            };
+            CheckResult(rayPipe.CreateRayTracingPipelines(device, new DeferredOperationKHR(), new PipelineCache(),
+                1, &rayTracingPipelineCI, null, out pipeline), nameof(rayPipe.CreateRayTracingPipelines));
+        }
+
+    // Create the shader binding table
+    PhysicalDeviceRayTracingPipelinePropertiesKHR rtPipeProps = new() {
+        SType = StructureType.PhysicalDeviceRayTracingPipelinePropertiesKhr
+    };
+    PhysicalDeviceProperties2 devProps = new()
+    {
+        SType = StructureType.PhysicalDeviceProperties2,
+        PNext = &rtPipeProps
+    };
+    vk.GetPhysicalDeviceProperties2(physicalDevice, &devProps);
+
+    uint AlignedSize(uint value, uint alignment) => (value + alignment - 1) & ~(alignment - 1);
+
+    uint handleSize = rtPipeProps.ShaderGroupHandleSize;
+    uint handleSizeAligned = AlignedSize(rtPipeProps.ShaderGroupHandleSize, rtPipeProps.ShaderGroupHandleAlignment);
+    uint groupCount = (uint)shaderGroups.Count;
+    uint sbtSize = groupCount * handleSizeAligned;
+
+    byte[] shaderHandleStorage = new byte[sbtSize];
+    fixed (byte* storage = shaderHandleStorage)
+    {
+        CheckResult(rayPipe.GetRayTracingShaderGroupHandles(device, pipeline, 0, groupCount, sbtSize, storage),
+            nameof(rayPipe.GetRayTracingShaderGroupHandles));
+    }
+
+    const BufferUsageFlags bufferUsageFlags = BufferUsageFlags.ShaderBindingTableBitKhr | BufferUsageFlags.ShaderDeviceAddressBit;
+    const MemoryPropertyFlags memoryUsageFlags = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
+    var raygenShaderBindingTable = CreateBuffer(bufferUsageFlags, memoryUsageFlags, new Span<byte>(shaderHandleStorage, 0, (int)handleSize));
+    var missShaderBindingTable = CreateBuffer(bufferUsageFlags, memoryUsageFlags, new Span<byte>(shaderHandleStorage, (int)handleSizeAligned, (int)handleSize));
+    var hitShaderBindingTable = CreateBuffer(bufferUsageFlags, memoryUsageFlags, new Span<byte>(shaderHandleStorage, (int)handleSizeAligned * 2, (int)handleSize));
+
+    // Create descriptor sets
+    var poolSizes = stackalloc DescriptorPoolSize[] {
+        new() {
+            Type = DescriptorType.AccelerationStructureKhr,
+            DescriptorCount = 1
+        },
+        new() {
+            Type = DescriptorType.StorageImage,
+            DescriptorCount = 1
+        },
+        // new() {
+        //     Type = DescriptorType.UniformBuffer,
+        //     DescriptorCount = 1
+        // },
+    };
+
+    DescriptorPoolCreateInfo descriptorPoolCreateInfo = new() {
+        SType = StructureType.DescriptorPoolCreateInfo,
+        MaxSets = 1,
+        PoolSizeCount = 2, // TODO make sure not to forget me :(
+        PPoolSizes = poolSizes
+    };
+    CheckResult(vk.CreateDescriptorPool(device, &descriptorPoolCreateInfo, null, out var descriptorPool),
+        nameof(vk.CreateDescriptorPool));
+
+    DescriptorSetAllocateInfo descriptorSetAllocateInfo = new() {
+        SType = StructureType.DescriptorSetAllocateInfo,
+        DescriptorPool = descriptorPool,
+        DescriptorSetCount = 1,
+        PSetLayouts = &descriptorSetLayout
+    };
+    CheckResult(vk.AllocateDescriptorSets(device, &descriptorSetAllocateInfo, out var descriptorSet),
+        nameof(vk.AllocateDescriptorSets));
+
+    var topLvl = topLevelAccel;
+    WriteDescriptorSetAccelerationStructureKHR descriptorAccelerationStructureInfo = new()
+    {
+        SType = StructureType.WriteDescriptorSetAccelerationStructureKhr,
+        AccelerationStructureCount = 1,
+        PAccelerationStructures = &topLvl
+    };
+
+    WriteDescriptorSet accelerationStructureWrite = new()
+    {
+        SType = StructureType.WriteDescriptorSet,
+        PNext = &descriptorAccelerationStructureInfo,
+        DstSet = descriptorSet,
+        DstBinding = 0,
+        DescriptorCount = 1,
+        DescriptorType = DescriptorType.AccelerationStructureKhr
+    };
+
+    DescriptorImageInfo storageImageDescriptor = new()
+    {
+        ImageView = storageImageView,
+        ImageLayout = ImageLayout.General,
+    };
+
+    WriteDescriptorSet resultImageWrite = new()
+    {
+        SType = StructureType.WriteDescriptorSet,
+        DstSet = descriptorSet,
+        DescriptorType = DescriptorType.StorageImage,
+        DstBinding = 1,
+        PImageInfo = &storageImageDescriptor
+    };
+
+    // WriteDescriptorSet uniformBufferWrite = new()
+    // {
+    //     SType = StructureType.WriteDescriptorSet,
+    //     DstSet = descriptorSet,
+    //     DescriptorType = DescriptorType.UniformBuffer,
+    //     DstBinding = 2,
+    //     PBufferInfo = &uniformDescriptor
+    // }
+
+    var writeDescriptorSets = stackalloc WriteDescriptorSet[] {
+        accelerationStructureWrite,
+        resultImageWrite,
+        // uniformBufferWrite
+    };
+    uint numDescriptorSets = 2; // TODO make sure to update in tandem with above
+
+    vk.UpdateDescriptorSets(device, numDescriptorSets, writeDescriptorSets, 0, null);
+
+    return pipeline;
+}
+var rayPipeline = CreateRayTracingPipeline();
+// TODO clean-up for the RT pipeline and shader binding table and descriptor sets
 
 unsafe CommandBuffer[] CreateCommandBuffers()
 {
