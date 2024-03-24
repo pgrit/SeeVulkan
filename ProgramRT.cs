@@ -343,8 +343,12 @@ unsafe (KhrSwapchain, SwapchainKHR, Image[], Format, Extent2D) CreateSwapChain()
             khrSurface.GetPhysicalDeviceSurfacePresentModes(physicalDevice, surface, ref presentModeCount, formatsPtr);
 
     var surfaceFormat = formats.FirstOrDefault(
-        format => format.Format == Format.B8G8R8A8Srgb && format.ColorSpace == ColorSpaceKHR.SpaceSrgbNonlinearKhr,
-        formats[0]
+        // format => format.Format == Format.B8G8R8A8Srgb && format.ColorSpace == ColorSpaceKHR.SpaceSrgbNonlinearKhr,
+        format => format.Format == Format.R16G16B16A16Sfloat && format.ColorSpace == ColorSpaceKHR.SpaceExtendedSrgbLinearExt,
+        formats.FirstOrDefault(
+            format => format.Format == Format.B8G8R8A8Srgb && format.ColorSpace == ColorSpaceKHR.SpaceSrgbNonlinearKhr,
+            formats[0]
+        )
     );
 
     var presentMode = presentModes.FirstOrDefault(
@@ -374,7 +378,7 @@ unsafe (KhrSwapchain, SwapchainKHR, Image[], Format, Extent2D) CreateSwapChain()
         ImageColorSpace = surfaceFormat.ColorSpace,
         ImageExtent = extent,
         ImageArrayLayers = 1,
-        ImageUsage = ImageUsageFlags.ColorAttachmentBit,
+        ImageUsage = ImageUsageFlags.ColorAttachmentBit | ImageUsageFlags.TransferDstBit | ImageUsageFlags.TransferSrcBit,
         ImageSharingMode = SharingMode.Exclusive,
         PreTransform = capabilities.CurrentTransform,
         CompositeAlpha = CompositeAlphaFlagsKHR.OpaqueBitKhr,
@@ -1152,10 +1156,19 @@ var (topLevelAccel, topLevelAccelDeviceAddress) = CreateTopLevelAccelerationStru
 // TODO recreate storage image upon resize
 // TODO clean up storage image
 
+ImageSubresourceRange subresourceRange = new()
+{
+    AspectMask = ImageAspectFlags.ColorBit,
+    BaseMipLevel = 0,
+    LevelCount = 1,
+    LayerCount = 1
+};
+
 unsafe (Image, ImageView) CreateStorageImage()
 {
-    // TODO is this format always supported?
-    const Format colorFormat = Format.R32G32B32A32Sfloat;
+    // TODO if the format is linear but not 32 bit: add conversion. If it is sRGB LDR, add tone mapping
+    //      either way, always use Format.R32G32B32A32Sfloat here to get highest quality output
+    Format colorFormat = swapChainImageFormat;
 
     ImageCreateInfo createInfo = new()
     {
@@ -1191,26 +1204,12 @@ unsafe (Image, ImageView) CreateStorageImage()
         SType = StructureType.ImageViewCreateInfo,
         ViewType = ImageViewType.Type2D,
         Format = colorFormat,
-        SubresourceRange = new() {
-            AspectMask =  ImageAspectFlags.ColorBit,
-            BaseMipLevel = 0,
-            LevelCount = 1,
-            BaseArrayLayer = 0,
-            LayerCount = 1,
-        },
+        SubresourceRange = subresourceRange,
         Image = image
     };
     CheckResult(vk.CreateImageView(device, &imageView, null, out var view), nameof(vk.CreateImageView));
 
     var commandBuffer = StartOneTimeCommand();
-
-    ImageSubresourceRange subresourceRange = new()
-    {
-        AspectMask = ImageAspectFlags.ColorBit,
-        BaseMipLevel = 0,
-        LevelCount = 1,
-        LayerCount = 1
-    };
 
     ImageMemoryBarrier imageMemoryBarrier = new()
     {
@@ -1255,7 +1254,24 @@ const uint VK_SHADER_UNUSED_KHR = ~0U;
 if (!vk.TryGetDeviceExtension(instance, device, out KhrRayTracingPipeline rayPipe))
     throw new NotSupportedException($"{KhrRayTracingPipeline.ExtensionName} extension not found.");
 
-unsafe Pipeline CreateRayTracingPipeline()
+uint AlignedSize(uint value, uint alignment) => (value + alignment - 1) & ~(alignment - 1);
+
+PhysicalDeviceRayTracingPipelinePropertiesKHR rtPipeProps;
+unsafe
+{
+    PhysicalDeviceRayTracingPipelinePropertiesKHR pipeProps = new() {
+        SType = StructureType.PhysicalDeviceRayTracingPipelinePropertiesKhr
+    };
+    PhysicalDeviceProperties2 devProps = new()
+    {
+        SType = StructureType.PhysicalDeviceProperties2,
+        PNext = &pipeProps
+    };
+    vk.GetPhysicalDeviceProperties2(physicalDevice, &devProps);
+    rtPipeProps = pipeProps;
+}
+
+unsafe (Pipeline, PipelineLayout, DescriptorSet, Buffer, Buffer, Buffer) CreateRayTracingPipeline()
 {
     var bindings = stackalloc DescriptorSetLayoutBinding[] {
         new()
@@ -1317,10 +1333,9 @@ unsafe Pipeline CreateRayTracingPipeline()
             void main()
             {
                 const vec2 pixelCenter = vec2(gl_LaunchIDEXT.xy) + vec2(0.5);
-                const vec2 inUV = pixelCenter/vec2(gl_LaunchSizeEXT.xy);
-                vec2 d = inUV * 2.0 - 1.0;
+                const vec2 imagePos = pixelCenter / vec2(gl_LaunchSizeEXT.xy) * 2.0 - 1.0;
 
-                vec4 origin = vec4(0, 0, 0, 1);
+                vec4 origin = vec4(imagePos.x, imagePos.y, -10, 1);
                 vec4 direction = vec4(0, 0, 1, 1);
 
                 float tmin = 0.0;
@@ -1366,7 +1381,7 @@ unsafe Pipeline CreateRayTracingPipeline()
 
             void main()
             {
-                hitValue = vec3(0.0, 0.0, 0.2);
+                hitValue = vec3(0.0, 0.0, 0.0);
             }
             """, "rmiss"
         ));
@@ -1405,7 +1420,7 @@ unsafe Pipeline CreateRayTracingPipeline()
             void main()
             {
                 const vec3 barycentricCoords = vec3(1.0f - attribs.x - attribs.y, attribs.x, attribs.y);
-                hitValue = barycentricCoords;
+                hitValue = barycentricCoords * 5.0;
             }
             """, "rchit"
         ));
@@ -1445,18 +1460,6 @@ unsafe Pipeline CreateRayTracingPipeline()
         1, &rayTracingPipelineCI, null, out var pipeline), nameof(rayPipe.CreateRayTracingPipelines));
 
     // Create the shader binding table
-    PhysicalDeviceRayTracingPipelinePropertiesKHR rtPipeProps = new() {
-        SType = StructureType.PhysicalDeviceRayTracingPipelinePropertiesKhr
-    };
-    PhysicalDeviceProperties2 devProps = new()
-    {
-        SType = StructureType.PhysicalDeviceProperties2,
-        PNext = &rtPipeProps
-    };
-    vk.GetPhysicalDeviceProperties2(physicalDevice, &devProps);
-
-    uint AlignedSize(uint value, uint alignment) => (value + alignment - 1) & ~(alignment - 1);
-
     uint handleSize = rtPipeProps.ShaderGroupHandleSize;
     uint handleSizeAligned = AlignedSize(rtPipeProps.ShaderGroupHandleSize, rtPipeProps.ShaderGroupHandleAlignment);
     uint sbtSize = groupCount * handleSizeAligned;
@@ -1561,12 +1564,12 @@ unsafe Pipeline CreateRayTracingPipeline()
 
     vk.UpdateDescriptorSets(device, numDescriptorSets, writeDescriptorSets, 0, null);
 
-    return pipeline;
+    return (pipeline, pipelineLayout, descriptorSet, raygenShaderBindingTable, missShaderBindingTable, hitShaderBindingTable);
 }
-var rayPipeline = CreateRayTracingPipeline();
+var (rayPipeline, rayPipelineLayout, descriptorSet, raygenShaderBindingTable, missShaderBindingTable, hitShaderBindingTable) = CreateRayTracingPipeline();
 // TODO clean-up for the RT pipeline and shader binding table and descriptor sets
 
-unsafe CommandBuffer[] CreateCommandBuffers()
+unsafe CommandBuffer[] BuildCommandBuffersRT()
 {
     var commandBuffers = new CommandBuffer[framebuffers.Length];
 
@@ -1590,40 +1593,118 @@ unsafe CommandBuffer[] CreateCommandBuffers()
 
         CheckResult(vk.BeginCommandBuffer(commandBuffers[i], beginInfo), nameof(vk.BeginCommandBuffer));
 
-        RenderPassBeginInfo renderPassInfo = new()
+        uint handleSizeAligned = AlignedSize(rtPipeProps.ShaderGroupHandleSize, rtPipeProps.ShaderGroupHandleAlignment);
+
+        StridedDeviceAddressRegionKHR raygenShaderSbtEntry = new()
         {
-            SType = StructureType.RenderPassBeginInfo,
-            RenderPass = renderPass,
-            Framebuffer = framebuffers[i],
-            RenderArea =
+            DeviceAddress = GetBufferDeviceAddress(raygenShaderBindingTable),
+            Stride = handleSizeAligned,
+            Size = handleSizeAligned
+        };
+
+        StridedDeviceAddressRegionKHR missShaderSbtEntry = new()
+        {
+            DeviceAddress = GetBufferDeviceAddress(missShaderBindingTable),
+            Stride = handleSizeAligned,
+            Size = handleSizeAligned
+        };
+
+        StridedDeviceAddressRegionKHR hitShaderSbtEntry = new()
+        {
+            DeviceAddress = GetBufferDeviceAddress(hitShaderBindingTable),
+            Stride = handleSizeAligned,
+            Size = handleSizeAligned
+        };
+
+        StridedDeviceAddressRegionKHR callableShaderSbtEntry = new();
+
+        vk.CmdBindPipeline(commandBuffers[i], PipelineBindPoint.RayTracingKhr, rayPipeline);
+        var descSet = descriptorSet;
+        vk.CmdBindDescriptorSets(commandBuffers[i], PipelineBindPoint.RayTracingKhr, rayPipelineLayout, 0, 1, &descSet, 0, 0);
+
+        rayPipe.CmdTraceRays(
+            commandBuffers[i],
+            &raygenShaderSbtEntry,
+            &missShaderSbtEntry,
+            &hitShaderSbtEntry,
+            &callableShaderSbtEntry,
+            swapChainExtent.Width,
+            swapChainExtent.Height,
+            1);
+
+        ImageMemoryBarrier curSwapDest = new()
+        {
+            SType = StructureType.ImageMemoryBarrier,
+            OldLayout = ImageLayout.Undefined,
+            NewLayout = ImageLayout.TransferDstOptimal,
+            Image = swapChainImages[i],
+            SubresourceRange = subresourceRange
+        };
+        vk.CmdPipelineBarrier(commandBuffers[i], PipelineStageFlags.AllCommandsBit, PipelineStageFlags.AllCommandsBit,
+            0, 0, null, 0, null, 1, &curSwapDest);
+
+        ImageMemoryBarrier rtSrc = new()
+        {
+            SType = StructureType.ImageMemoryBarrier,
+            OldLayout = ImageLayout.General,
+            NewLayout = ImageLayout.TransferSrcOptimal,
+            Image = storageImage,
+            SubresourceRange = subresourceRange
+        };
+        vk.CmdPipelineBarrier(commandBuffers[i], PipelineStageFlags.AllCommandsBit, PipelineStageFlags.AllCommandsBit,
+            0, 0, null, 0, null, 1, &rtSrc);
+
+        ImageCopy copyRegion = new()
+        {
+            SrcSubresource = new()
             {
-                Offset = { X = 0, Y = 0 },
-                Extent = swapChainExtent,
-            }
+                AspectMask = ImageAspectFlags.ColorBit,
+                BaseArrayLayer = 0,
+                MipLevel = 0,
+                LayerCount = 1,
+            },
+            SrcOffset = new(0, 0, 0),
+            DstSubresource = new()
+            {
+                AspectMask = ImageAspectFlags.ColorBit,
+                BaseArrayLayer = 0,
+                MipLevel = 0,
+                LayerCount = 1,
+            },
+            DstOffset = new(0, 0, 0),
+            Extent = new(swapChainExtent.Width, swapChainExtent.Height, 1)
         };
+        vk.CmdCopyImage(commandBuffers[i], storageImage, ImageLayout.TransferSrcOptimal, swapChainImages[i],
+            ImageLayout.TransferDstOptimal, 1, &copyRegion);
 
-        ClearValue clearColor = new()
+        ImageMemoryBarrier swapImgPresent = new()
         {
-            Color = new() { Float32_0 = 0, Float32_1 = 0, Float32_2 = 0, Float32_3 = 1 },
+            SType = StructureType.ImageMemoryBarrier,
+            OldLayout = ImageLayout.TransferDstOptimal,
+            NewLayout = ImageLayout.PresentSrcKhr,
+            Image = swapChainImages[i],
+            SubresourceRange = subresourceRange
         };
+        vk.CmdPipelineBarrier(commandBuffers[i], PipelineStageFlags.AllCommandsBit, PipelineStageFlags.AllCommandsBit,
+            0, 0, null, 0, null, 1, &swapImgPresent);
 
-        renderPassInfo.ClearValueCount = 1;
-        renderPassInfo.PClearValues = &clearColor;
-
-        vk.CmdBeginRenderPass(commandBuffers[i], &renderPassInfo, SubpassContents.Inline);
-
-        vk.CmdBindPipeline(commandBuffers[i], PipelineBindPoint.Graphics, pipeline);
-
-        vk.CmdDraw(commandBuffers[i], 3, 1, 0, 0);
-
-        vk.CmdEndRenderPass(commandBuffers[i]);
+        ImageMemoryBarrier rtImgGeneral = new()
+        {
+            SType = StructureType.ImageMemoryBarrier,
+            OldLayout = ImageLayout.TransferSrcOptimal,
+            NewLayout = ImageLayout.General,
+            Image = storageImage,
+            SubresourceRange = subresourceRange
+        };
+        vk.CmdPipelineBarrier(commandBuffers[i], PipelineStageFlags.AllCommandsBit, PipelineStageFlags.AllCommandsBit,
+            0, 0, null, 0, null, 1, &rtImgGeneral);
 
         CheckResult(vk.EndCommandBuffer(commandBuffers[i]), nameof(vk.EndCommandBuffer));
     }
 
     return commandBuffers;
 }
-var commandBuffers = CreateCommandBuffers();
+var commandBuffers = BuildCommandBuffersRT();
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
