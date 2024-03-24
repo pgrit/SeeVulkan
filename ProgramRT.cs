@@ -342,14 +342,26 @@ unsafe (KhrSwapchain, SwapchainKHR, Image[], Format, Extent2D) CreateSwapChain()
         fixed (PresentModeKHR* formatsPtr = presentModes)
             khrSurface.GetPhysicalDeviceSurfacePresentModes(physicalDevice, surface, ref presentModeCount, formatsPtr);
 
-    var surfaceFormat = formats.FirstOrDefault(
-        // format => format.Format == Format.B8G8R8A8Srgb && format.ColorSpace == ColorSpaceKHR.SpaceSrgbNonlinearKhr,
-        format => format.Format == Format.R16G16B16A16Sfloat && format.ColorSpace == ColorSpaceKHR.SpaceExtendedSrgbLinearExt,
-        formats.FirstOrDefault(
-            format => format.Format == Format.B8G8R8A8Srgb && format.ColorSpace == ColorSpaceKHR.SpaceSrgbNonlinearKhr,
-            formats[0]
-        )
-    );
+    // TODO how to only use HDR if HDR mode is on (possibly Windows specific)
+    (Format Format, ColorSpaceKHR ColorSpace)[] preferredFormats = [
+        (Format.R32G32B32A32Sfloat, ColorSpaceKHR.SpaceExtendedSrgbLinearExt),
+        (Format.R16G16B16A16Sfloat, ColorSpaceKHR.SpaceExtendedSrgbLinearExt),
+        (Format.B8G8R8A8Srgb, ColorSpaceKHR.SpaceSrgbNonlinearKhr)
+    ];
+
+    SurfaceFormatKHR SelectFormat()
+    {
+        for (int i = 0; i < preferredFormats.Length; ++i)
+        {
+            foreach (var f in formats)
+            {
+                if (f.Format == preferredFormats[i].Format && f.ColorSpace == preferredFormats[i].ColorSpace)
+                    return f;
+            }
+        }
+        return formats[0];
+    }
+    var surfaceFormat = SelectFormat();
 
     var presentMode = presentModes.FirstOrDefault(
         mode => mode == PresentModeKHR.MailboxKhr,
@@ -441,47 +453,6 @@ unsafe ImageView[] CreateImageViews()
 }
 var swapChainImageViews = CreateImageViews();
 
-unsafe RenderPass CreateRenderPass()
-{
-    AttachmentDescription colorAttachment = new()
-    {
-        Format = swapChainImageFormat,
-        Samples = SampleCountFlags.Count1Bit,
-        LoadOp = AttachmentLoadOp.Clear,
-        StoreOp = AttachmentStoreOp.Store,
-        StencilLoadOp = AttachmentLoadOp.DontCare,
-        InitialLayout = ImageLayout.Undefined,
-        FinalLayout = ImageLayout.PresentSrcKhr,
-    };
-
-    AttachmentReference colorAttachmentRef = new()
-    {
-        Attachment = 0,
-        Layout = ImageLayout.ColorAttachmentOptimal,
-    };
-
-    SubpassDescription subpass = new()
-    {
-        PipelineBindPoint = PipelineBindPoint.Graphics,
-        ColorAttachmentCount = 1,
-        PColorAttachments = &colorAttachmentRef,
-    };
-
-    RenderPassCreateInfo renderPassInfo = new()
-    {
-        SType = StructureType.RenderPassCreateInfo,
-        AttachmentCount = 1,
-        PAttachments = &colorAttachment,
-        SubpassCount = 1,
-        PSubpasses = &subpass,
-    };
-
-    CheckResult(vk.CreateRenderPass(device, renderPassInfo, null, out var renderPass), nameof(vk.CreateRenderPass));
-
-    return renderPass;
-}
-var renderPass = CreateRenderPass();
-
 unsafe ShaderModule CreateShaderModule(byte[] code)
 {
     fixed (byte* codePtr = code)
@@ -524,32 +495,6 @@ byte[] CompileShader(string code, string ext)
     return bytes;
 }
 
-unsafe Framebuffer[] CreateFramebuffers()
-{
-    var swapChainFramebuffers = new Framebuffer[swapChainImageViews.Length];
-
-    for (int i = 0; i < swapChainImageViews.Length; i++)
-    {
-        var attachment = swapChainImageViews[i];
-
-        FramebufferCreateInfo framebufferInfo = new()
-        {
-            SType = StructureType.FramebufferCreateInfo,
-            RenderPass = renderPass,
-            AttachmentCount = 1,
-            PAttachments = &attachment,
-            Width = swapChainExtent.Width,
-            Height = swapChainExtent.Height,
-            Layers = 1,
-        };
-
-        CheckResult(vk.CreateFramebuffer(device, framebufferInfo, null, out swapChainFramebuffers[i]), nameof(vk.CreateFramebuffer));
-    }
-
-    return swapChainFramebuffers;
-}
-var framebuffers = CreateFramebuffers();
-
 unsafe CommandPool CreateCommandPool()
 {
     uint queueIdx = FindQueueFamilyIndex(physicalDevice).Graphics;
@@ -567,8 +512,8 @@ var commandPool = CreateCommandPool();
 
 unsafe void CleanUpSwapchain()
 {
-    foreach (var buffer in framebuffers)
-        vk.DestroyFramebuffer(device, buffer, null);
+    // foreach (var buffer in framebuffers)
+    //     vk.DestroyFramebuffer(device, buffer, null);
     foreach (var imageView in swapChainImageViews)
         vk.DestroyImageView(device, imageView, null);
     khrSwapChain.DestroySwapchain(device, swapChain, null);
@@ -1392,7 +1337,7 @@ var (rayPipeline, rayPipelineLayout, descriptorSet, raygenShaderBindingTable, mi
 
 unsafe CommandBuffer[] BuildCommandBuffersRT()
 {
-    var commandBuffers = new CommandBuffer[framebuffers.Length];
+    var commandBuffers = new CommandBuffer[swapChainImages.Length];
 
     CommandBufferAllocateInfo allocInfo = new()
     {
@@ -1572,8 +1517,6 @@ void RecreateSwapChain() {
 
     (khrSwapChain, swapChain, swapChainImages, swapChainImageFormat, swapChainExtent) = CreateSwapChain();
     swapChainImageViews = CreateImageViews();
-    renderPass = CreateRenderPass();
-    framebuffers = CreateFramebuffers();
 
     imagesInFlight = new Fence[swapChainImages!.Length];
 }
@@ -1664,7 +1607,6 @@ unsafe {
     }
     vk.DestroyCommandPool(device, commandPool, null);
 
-    vk.DestroyRenderPass(device, renderPass, null);
     vk.DestroyDevice(device, null);
     khrSurface.DestroySurface(instance, surface, null);
     vk.DestroyInstance(instance, null);
