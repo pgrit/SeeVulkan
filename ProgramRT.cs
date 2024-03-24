@@ -1159,6 +1159,7 @@ unsafe (Image, ImageView) CreateStorageImage()
 
     ImageCreateInfo createInfo = new()
     {
+        SType = StructureType.ImageCreateInfo,
         ImageType = ImageType.Type2D,
         Format = colorFormat,
         Extent = new() {
@@ -1337,7 +1338,7 @@ unsafe Pipeline CreateRayTracingPipeline()
         shaderStages[i] = new()
         {
             SType = StructureType.PipelineShaderStageCreateInfo,
-            Stage = ShaderStageFlags.VertexBit,
+            Stage = ShaderStageFlags.RaygenBitKhr,
             Module = module,
             PName = (byte*)SilkMarshal.StringToPtr("main")
         };
@@ -1373,7 +1374,7 @@ unsafe Pipeline CreateRayTracingPipeline()
         shaderStages[i] = new()
         {
             SType = StructureType.PipelineShaderStageCreateInfo,
-            Stage = ShaderStageFlags.VertexBit,
+            Stage = ShaderStageFlags.MissBitKhr,
             Module = module,
             PName = (byte*)SilkMarshal.StringToPtr("main")
         };
@@ -1412,7 +1413,7 @@ unsafe Pipeline CreateRayTracingPipeline()
         shaderStages[i] = new()
         {
             SType = StructureType.PipelineShaderStageCreateInfo,
-            Stage = ShaderStageFlags.VertexBit,
+            Stage = ShaderStageFlags.ClosestHitBitKhr,
             Module = module,
             PName = (byte*)SilkMarshal.StringToPtr("main")
         };
@@ -1537,6 +1538,7 @@ unsafe Pipeline CreateRayTracingPipeline()
         DstSet = descriptorSet,
         DescriptorType = DescriptorType.StorageImage,
         DstBinding = 1,
+        DescriptorCount = 1,
         PImageInfo = &storageImageDescriptor
     };
 
@@ -1546,6 +1548,7 @@ unsafe Pipeline CreateRayTracingPipeline()
     //     DstSet = descriptorSet,
     //     DescriptorType = DescriptorType.UniformBuffer,
     //     DstBinding = 2,
+    //     DescriptorCount = 1,
     //     PBufferInfo = &uniformDescriptor
     // }
 
