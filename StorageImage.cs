@@ -1,3 +1,5 @@
+using System.Net.Sockets;
+
 namespace SeeVulkan;
 
 unsafe class StorageImage : VulkanComponent, IDisposable
@@ -9,7 +11,7 @@ unsafe class StorageImage : VulkanComponent, IDisposable
 
     IWindow window => rayDevice.Window;
 
-    public void CopyToHost()
+    public SimpleImageIO.Image CopyToHost()
     {
         int width = window.FramebufferSize.X;
         int height = window.FramebufferSize.Y;
@@ -131,7 +133,6 @@ unsafe class StorageImage : VulkanComponent, IDisposable
         vk.MapMemory(device, tmpMemory, 0, VK_WHOLE_SIZE, 0, (void**)&pData);
         pData += subResourceLayout.Offset;
 
-        // We assume RGBA ordering
         var outImage = new SimpleImageIO.Image(width, height, 4);
         for (int y = 0; y < height; y++)
         {
@@ -145,10 +146,11 @@ unsafe class StorageImage : VulkanComponent, IDisposable
             }
             pData += subResourceLayout.RowPitch;
         }
-        SimpleImageIO.TevIpc.ShowImage("testframe", outImage);
 
         vk.FreeMemory(device, tmpMemory, null);
         vk.DestroyImage(device, tmpImage, null);
+
+        return outImage;
     }
 
     public StorageImage(VulkanRayDevice rayDevice, Format colorFormat)

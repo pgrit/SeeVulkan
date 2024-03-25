@@ -8,22 +8,9 @@ var options = WindowOptions.DefaultVulkan with {
 };
 
 var window = Window.Create(options);
-
-window.Load += () => {
-    var input = window.CreateInput();
-    for (int i = 0; i < input.Keyboards.Count; i++)
-    {
-        input.Keyboards[i].KeyDown += (kbd, key, _) => {
-            if (key == Key.Escape)
-            {
-                window.Close();
-            }
-        };
-    }
-};
-
 window.Initialize();
 window.MakeCornersSquare();
+
 if (window.VkSurface is null)
     throw new Exception("Windowing platform doesn't support Vulkan.");
 
@@ -39,23 +26,24 @@ var viewToCam = camera.ViewToCamera;
 
 var renderer = new Renderer(window, meshes.ToArray(), camToWorld, viewToCam);
 
-// var mesh1 = new Mesh([
-//     new( 1.0f,  1.0f, 0.0f),
-//     new(-1.0f,  1.0f, 0.0f),
-//     new(-1.0f, -1.0f, 0.0f),
-//     new( 1.0f, -1.0f, 0.0f),
-// ], [
-//     0, 1, 2,
-//     0, 2, 3
-// ]);
-// var mesh2 = new Mesh([
-//     new( 0.25f, -0.25f, -0.25f),
-//     new(-0.25f, -0.25f, -0.25f),
-//     new( 0.0f,  0.25f, -0.25f),
-// ], [
-//     0, 1, 2
-// ]);
-// var renderer = new Renderer(window, [mesh1, mesh2]);
+var input = window.CreateInput();
+for (int i = 0; i < input.Keyboards.Count; i++)
+{
+    input.Keyboards[i].KeyDown += (kbd, key, _) => {
+        if (key == Key.Escape)
+        {
+            window.Close();
+        }
+        else if (key == Key.T)
+        {
+            renderer.SendToTev();
+        }
+        else if (key == Key.S)
+        {
+            renderer.SaveToFile();
+        }
+    };
+}
 
 window.Run();
 

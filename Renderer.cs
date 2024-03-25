@@ -13,6 +13,18 @@ class Renderer : IDisposable
 
     MeshAccel[] meshAccels;
 
+    public void SendToTev()
+    {
+        var img = renderTarget.CopyToHost();
+        SimpleImageIO.TevIpc.ShowImage("SeeVulkan", img);
+    }
+
+    public void SaveToFile(string filename = "SeeVulkan.exr")
+    {
+        var img = renderTarget.CopyToHost();
+        img.WriteToFile(filename);
+    }
+
     public Renderer(IWindow window, ReadOnlySpan<Mesh> meshes, Matrix4x4 camToWorld, Matrix4x4 viewToCam)
     {
         device = new VulkanRayDevice(window);
@@ -61,8 +73,6 @@ class Renderer : IDisposable
                 double fps = 1.0 / (elapsed / 1.0);
                 timeToFpsUpdate = fpsInterval;
                 window.Title = $"SeeVulkan - {fps:.} fps";
-
-                renderTarget.CopyToHost();
             }
         };
     }
