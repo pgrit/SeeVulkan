@@ -1,3 +1,5 @@
+using System.Reflection;
+
 namespace SeeVulkan;
 
 unsafe class RayTracingPipeline : VulkanComponent, IDisposable
@@ -81,43 +83,7 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
         var shaderStages = stackalloc PipelineShaderStageCreateInfo[(int)numStages];
         var shaderGroups = stackalloc RayTracingShaderGroupCreateInfoKHR[(int)numStages];
 
-        rgenShader = new Shader(rayDevice,
-            """
-            #version 460
-            #extension GL_EXT_ray_tracing : enable
-
-            layout(binding = 0, set = 0) uniform accelerationStructureEXT topLevelAS;
-            layout(binding = 1, set = 0, rgba32f) uniform image2D image;
-            layout(binding = 2, set = 0) uniform UniformBufferObject {
-                mat4 camToWorld;
-                mat4 viewToCam;
-            } ubo;
-
-            layout(location = 0) rayPayloadEXT vec3 hitValue;
-
-            void main()
-            {
-                const vec2 pixelCenter = vec2(gl_LaunchIDEXT.xy) + vec2(0.5);
-                const vec2 view = vec2(
-                    pixelCenter.x / gl_LaunchSizeEXT.x * 2.0 - 1.0,
-                    1.0 - pixelCenter.y / gl_LaunchSizeEXT.y * 2.0
-                );
-                vec4 localDir = ubo.viewToCam * vec4(view.xy, 0.0, 1.0);
-                vec4 worldDir = ubo.camToWorld * vec4(localDir.xyz, 0.0);
-                vec4 direction = vec4(normalize(worldDir.xyz), 0);
-                vec4 origin = ubo.camToWorld * vec4(0, 0, 0, 1);
-
-                float tmin = 0.0;
-                float tmax = 10000.0;
-
-                hitValue = vec3(0);
-
-                traceRayEXT(topLevelAS, gl_RayFlagsOpaqueEXT, 0xff, 0, 0, 0, origin.xyz, tmin, direction.xyz, tmax, 0);
-
-                imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(hitValue, 1.0));
-                // imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(origin.xyz, 1.0));
-            }
-            """, "rgen");
+        rgenShader = new Shader(rayDevice, ReadResourceText("Shaders.raygen.rgen"), "rgen");
 
         shaderStages[i] = new()
         {
@@ -138,19 +104,7 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
         ++i;
 
 
-        rmissShader = new Shader(rayDevice,
-            """
-            #version 460
-            #extension GL_EXT_ray_tracing : enable
-
-            layout(location = 0) rayPayloadInEXT vec3 hitValue;
-
-            void main()
-            {
-                hitValue = vec3(0.0, 0.0, 0.0);
-            }
-            """, "rmiss"
-        );
+        rmissShader = new Shader(rayDevice, ReadResourceText("Shaders.miss.rmiss"), "rmiss");
         shaderStages[i] = new()
         {
             SType = StructureType.PipelineShaderStageCreateInfo,
@@ -169,22 +123,7 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
         };
         ++i;
 
-        rchitShader = new Shader(rayDevice,
-            """
-            #version 460
-            #extension GL_EXT_ray_tracing : enable
-            #extension GL_EXT_nonuniform_qualifier : enable
-
-            layout(location = 0) rayPayloadInEXT vec3 hitValue;
-            hitAttributeEXT vec2 attribs;
-
-            void main()
-            {
-                const vec3 barycentricCoords = vec3(1.0f - attribs.x - attribs.y, attribs.x, attribs.y);
-                hitValue = barycentricCoords * 1.0;
-            }
-            """, "rchit"
-        );
+        rchitShader = new Shader(rayDevice, ReadResourceText("Shaders.hit.rchit"), "rchit");
         shaderStages[i] = new()
         {
             SType = StructureType.PipelineShaderStageCreateInfo,

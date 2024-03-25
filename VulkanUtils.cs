@@ -1,3 +1,5 @@
+using System.Reflection;
+
 namespace SeeVulkan;
 
 class VulkanUtils
@@ -12,4 +14,12 @@ class VulkanUtils
     }
 
     public static uint AlignedSize(uint value, uint alignment) => (value + alignment - 1) & ~(alignment - 1);
+
+    public static string ReadResourceText(string filename)
+    {
+        var assembly = typeof(RayTracingPipeline).GetTypeInfo().Assembly;
+        var stream = assembly.GetManifestResourceStream($"{assembly.GetName().Name}.{filename}")
+            ?? throw new FileNotFoundException("resource file not found", filename);
+        return new StreamReader(stream).ReadToEnd();
+    }
 }

@@ -16,4 +16,10 @@
     <ProjectReference Include="..\..\Repositories\SeeSharp\SeeSharp\SeeSharp.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Shaders/**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+  </ItemGroup>
+
 </Project>

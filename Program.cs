@@ -27,7 +27,7 @@ window.MakeCornersSquare();
 if (window.VkSurface is null)
     throw new Exception("Windowing platform doesn't support Vulkan.");
 
-var scene = SceneRegistry.LoadScene("CornellBox").MakeScene();
+var scene = SceneRegistry.LoadScene("RoughGlassesIndirect").MakeScene();
 List<Mesh> meshes = [];
 foreach (var m in scene.Meshes)
     meshes.Add(new(m.Vertices, m.Indices.Select(i => (uint)i).ToArray()));

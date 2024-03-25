@@ -143,7 +143,6 @@ unsafe class StorageImage : VulkanComponent, IDisposable
                 outImage[x, y, 2] = *row++;
                 outImage[x, y, 3] = *row++;
             }
-            // pData = (byte*)row;
             pData += subResourceLayout.RowPitch;
         }
         SimpleImageIO.TevIpc.ShowImage("testframe", outImage);
