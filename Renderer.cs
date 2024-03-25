@@ -31,13 +31,37 @@ class Renderer : IDisposable
         tmPipe = new ToneMapPipeline(device, renderTarget, toneMapTarget, swapChain.IsLinearColorSpace);
         pipe = new RenderPipeline(device, swapChain, rtPipe, tmPipe, renderTarget, toneMapTarget);
 
-        window.FramebufferResize += newSize => {
-            swapChain.NotifyResize();
+        swapChain.OnRecreate += () =>
+        {
+            renderTarget.Dispose();
+            toneMapTarget.Dispose();
+            renderTarget = new StorageImage(device, Format.R32G32B32A32Sfloat);
+            toneMapTarget = new StorageImage(device, swapChain.ImageFormat);
 
-            // TODO resize storage images
-            // TODO recreate the command buffers
+            rtPipe.Dispose();
+            tmPipe.Dispose();
+            pipe.Dispose();
+            rtPipe = new RayTracingPipeline(device, topLevelAccel, renderTarget.ImageView);
+            tmPipe = new ToneMapPipeline(device, renderTarget, toneMapTarget, swapChain.IsLinearColorSpace);
+            pipe = new RenderPipeline(device, swapChain, rtPipe, tmPipe, renderTarget, toneMapTarget);
         };
-        window.Render += swapChain.DrawFrame;
+
+        window.FramebufferResize += newSize => swapChain.NotifyResize();
+
+        double fpsInterval = 2.0;
+        double timeToFpsUpdate = fpsInterval;
+        window.Render += elapsed =>
+        {
+            swapChain.DrawFrame(elapsed);
+
+            timeToFpsUpdate -= elapsed;
+            if (timeToFpsUpdate < 0.0)
+            {
+                double fps = 1.0 / (elapsed / 1.0);
+                Console.WriteLine(fps);
+                timeToFpsUpdate = fpsInterval;
+            }
+        };
     }
 
     public void Dispose()

@@ -193,6 +193,8 @@ unsafe class SwapChain : VulkanComponent, IDisposable
     public void NotifyResize()
     => resized = true;
 
+    public event Action OnRecreate;
+
     public void DrawFrame(double delta)
     {
         vk.WaitForFences(rayDevice.Device, 1, inFlightFences[currentFrame], true, ulong.MaxValue);
@@ -290,6 +292,8 @@ unsafe class SwapChain : VulkanComponent, IDisposable
         CreateImageViews();
 
         imagesInFlight = new Fence[Images.Length];
+
+        OnRecreate.Invoke();
     }
 
     public void Dispose()
