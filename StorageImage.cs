@@ -6,6 +6,8 @@ unsafe class StorageImage : IDisposable
     public ImageView ImageView;
 
     VulkanRayDevice rayDevice;
+    private DeviceMemory memory;
+
     Vk vk => rayDevice.Vk;
     IWindow window => rayDevice.Window;
     Device device => rayDevice.Device;
@@ -40,7 +42,7 @@ unsafe class StorageImage : IDisposable
             MemoryTypeIndex = rayDevice.GetMemoryTypeIdx(memReqs.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit).Value
         };
 
-        CheckResult(vk.AllocateMemory(device, &memoryAllocateInfo, null, out var memory), nameof(vk.AllocateMemory));
+        CheckResult(vk.AllocateMemory(device, &memoryAllocateInfo, null, out memory), nameof(vk.AllocateMemory));
         CheckResult(vk.BindImageMemory(device, Image, memory, 0), nameof(vk.BindImageMemory));
 
         ImageSubresourceRange subresourceRange = new()
@@ -82,6 +84,7 @@ unsafe class StorageImage : IDisposable
     public void Dispose()
     {
         vk.DestroyImageView(device, ImageView, null);
+        vk.FreeMemory(device, memory, null);
         vk.DestroyImage(device, Image, null);
     }
 }

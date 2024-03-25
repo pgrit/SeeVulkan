@@ -66,7 +66,7 @@ unsafe class MeshAccel : RayAccelBase, IDisposable
         accel.GetAccelerationStructureBuildSizes(device, AccelerationStructureBuildTypeKHR.DeviceKhr,
             accelBuildGeometryInfo, numTriangles, out var buildSizeInfo);
 
-        var bottomLvlAccelBuffer = CreateAccelBuffer(buildSizeInfo.AccelerationStructureSize);
+        bottomLvlAccelBuffer = CreateAccelBuffer(buildSizeInfo.AccelerationStructureSize);
 
         AccelerationStructureCreateInfoKHR accelerationStructureCreateInfo = new()
         {
@@ -119,9 +119,11 @@ unsafe class MeshAccel : RayAccelBase, IDisposable
     AccelerationStructureKHR accelStructHandle;
 
     public ulong DeviceAddress;
+    private VulkanBuffer bottomLvlAccelBuffer;
 
     public void Dispose()
     {
+        bottomLvlAccelBuffer.Dispose();
         vertexBuffer.Dispose();
         indexBuffer.Dispose();
         transformBuffer.Dispose();

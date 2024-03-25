@@ -42,6 +42,8 @@ class Renderer : IDisposable
 
     public void Dispose()
     {
+        device.Vk.DeviceWaitIdle(device.Device);
+
         pipe.Dispose();
         tmPipe.Dispose();
         rtPipe.Dispose();

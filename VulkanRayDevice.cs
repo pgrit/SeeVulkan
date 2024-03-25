@@ -21,6 +21,8 @@ unsafe class VulkanRayDevice : IDisposable
     public Queue GraphicsQueue, PresentQueue;
     public uint GraphicsQueueIdx, PresentQueueIdx;
     public CommandPool CommandPool;
+    private ExtDebugUtils debugUtils;
+    private DebugUtilsMessengerEXT debugMessenger;
 
     static uint DebugCallback(DebugUtilsMessageSeverityFlagsEXT severity, DebugUtilsMessageTypeFlagsEXT typeFlags, DebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData)
     {
@@ -99,7 +101,7 @@ unsafe class VulkanRayDevice : IDisposable
 
         if (EnableValidationLayers)
         {
-            if (!vk.TryGetInstanceExtension(Instance, out ExtDebugUtils debugUtils))
+            if (!vk.TryGetInstanceExtension(Instance, out debugUtils))
                 return;
 
             DebugUtilsMessengerCreateInfoEXT dbgCreateInfo = new()
@@ -114,7 +116,7 @@ unsafe class VulkanRayDevice : IDisposable
                 PfnUserCallback = (DebugUtilsMessengerCallbackFunctionEXT)DebugCallback
             };
 
-            CheckResult(debugUtils.CreateDebugUtilsMessenger(Instance, dbgCreateInfo, null, out var debugMessenger), nameof(debugUtils.CreateDebugUtilsMessenger));
+            CheckResult(debugUtils.CreateDebugUtilsMessenger(Instance, dbgCreateInfo, null, out debugMessenger), nameof(debugUtils.CreateDebugUtilsMessenger));
         }
     }
 
@@ -387,6 +389,8 @@ unsafe class VulkanRayDevice : IDisposable
     public void Dispose()
     {
         vk.DestroyCommandPool(Device, CommandPool, null);
+
+        debugUtils?.DestroyDebugUtilsMessenger(Instance, debugMessenger, null);
 
         vk.DestroyDevice(Device, null);
         KhrSurface.DestroySurface(Instance, Surface, null);

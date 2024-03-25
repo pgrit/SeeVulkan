@@ -170,7 +170,7 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
             void main()
             {
                 const vec3 barycentricCoords = vec3(1.0f - attribs.x - attribs.y, attribs.x, attribs.y);
-                hitValue = barycentricCoords * 5.0;
+                hitValue = barycentricCoords * 1.0;
             }
             """, "rchit"
         );
