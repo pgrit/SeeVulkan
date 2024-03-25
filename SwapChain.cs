@@ -1,11 +1,8 @@
 namespace SeeVulkan;
 
-unsafe class SwapChain : IDisposable
+unsafe class SwapChain : VulkanComponent, IDisposable
 {
     const int MAX_FRAMES_IN_FLIGHT = 2;
-
-    Vk vk;
-    VulkanRayDevice rayDevice;
 
     public Image[] Images;
     public ImageView[] ImageViews;
@@ -108,6 +105,8 @@ unsafe class SwapChain : IDisposable
 
         ImageFormat = surfaceFormat.Format;
         IsLinearColorSpace = surfaceFormat.ColorSpace == ColorSpaceKHR.SpaceExtendedSrgbLinearExt;
+
+        CommandBuffers = new CommandBuffer[imageCount];
     }
 
     KhrSwapchain khrSwapChain;
@@ -174,11 +173,8 @@ unsafe class SwapChain : IDisposable
         }
     }
 
-    public SwapChain(VulkanRayDevice rayDevice)
+    public SwapChain(VulkanRayDevice rayDevice) : base(rayDevice)
     {
-        vk = rayDevice.Vk;
-        this.rayDevice = rayDevice;
-
         CreateSwapChain();
         CreateImageViews();
         CreateSyncObjects();
@@ -190,6 +186,9 @@ unsafe class SwapChain : IDisposable
     private Semaphore[] renderFinishedSemaphores;
     private Fence[] inFlightFences;
     private Fence[] imagesInFlight;
+
+    public uint Width => Extent.Width;
+    public uint Height => Extent.Height;
 
     public void NotifyResize()
     => resized = true;
@@ -267,6 +266,10 @@ unsafe class SwapChain : IDisposable
     {
         foreach (var imageView in ImageViews)
             vk.DestroyImageView(rayDevice.Device, imageView, null);
+        fixed (CommandBuffer* commandBuffersPtr = CommandBuffers)
+        {
+            vk.FreeCommandBuffers(device, rayDevice.CommandPool, (uint)CommandBuffers.Length, commandBuffersPtr);
+        }
         khrSwapChain.DestroySwapchain(rayDevice.Device, swapChain, null);
     }
 

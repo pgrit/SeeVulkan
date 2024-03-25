@@ -57,7 +57,7 @@ unsafe class TopLevelAccel : RayAccelBase, IDisposable
         };
 
         accel.GetAccelerationStructureBuildSizes(device, AccelerationStructureBuildTypeKHR.DeviceKhr,
-            &accelBuildGeometryInfo, 1, out var accelBuildSizesInfo);
+            &accelBuildGeometryInfo, (uint)meshAccels.Length, out var accelBuildSizesInfo);
         accelBuffer = CreateAccelBuffer(accelBuildSizesInfo.AccelerationStructureSize);
 
         AccelerationStructureCreateInfoKHR createInfo = new()
@@ -75,7 +75,7 @@ unsafe class TopLevelAccel : RayAccelBase, IDisposable
 
         AccelerationStructureBuildRangeInfoKHR accelerationStructureBuildRangeInfo = new()
         {
-            PrimitiveCount = 1,
+            PrimitiveCount = (uint)meshAccels.Length,
             PrimitiveOffset = 0,
             FirstVertex = 0,
             TransformOffset = 0

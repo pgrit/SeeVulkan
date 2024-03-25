@@ -19,19 +19,19 @@ unsafe class MeshAccel : RayAccelBase, IDisposable
         matrix.Matrix[5] = 1.0f;
         matrix.Matrix[10] = 1.0f;
 
-        vertexBuffer = new VulkanBuffer.Make(rayDevice,
+        vertexBuffer = VulkanBuffer.Make(rayDevice,
             BufferUsageFlags.ShaderDeviceAddressBit | BufferUsageFlags.AccelerationStructureBuildInputReadOnlyBitKhr,
             MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
             vertices
         );
 
-        indexBuffer = new VulkanBuffer.Make(rayDevice,
+        indexBuffer = VulkanBuffer.Make(rayDevice,
             BufferUsageFlags.ShaderDeviceAddressBit | BufferUsageFlags.AccelerationStructureBuildInputReadOnlyBitKhr,
             MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
             indices
         );
 
-        transformBuffer = new VulkanBuffer.Make(rayDevice,
+        transformBuffer = VulkanBuffer.Make<float>(rayDevice,
             BufferUsageFlags.ShaderDeviceAddressBit | BufferUsageFlags.AccelerationStructureBuildInputReadOnlyBitKhr,
             MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
             new Span<float>(matrix.Matrix, 12)

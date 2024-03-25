@@ -48,7 +48,8 @@ unsafe class StorageImage : IDisposable
             AspectMask = ImageAspectFlags.ColorBit,
             BaseMipLevel = 0,
             LevelCount = 1,
-            LayerCount = 1
+            BaseArrayLayer = 0,
+            LayerCount = 1,
         };
 
         ImageViewCreateInfo imageView = new()

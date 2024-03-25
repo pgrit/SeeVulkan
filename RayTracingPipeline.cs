@@ -1,8 +1,7 @@
 namespace SeeVulkan;
 
-unsafe class RayTracingPipeline : IDisposable
+unsafe class RayTracingPipeline : VulkanComponent, IDisposable
 {
-    VulkanRayDevice rayDevice;
     private DescriptorSetLayout descriptorSetLayout;
     private PipelineLayout pipelineLayout;
     private Shader rgenShader;
@@ -12,16 +11,14 @@ unsafe class RayTracingPipeline : IDisposable
 
     VulkanBuffer raygenShaderBindingTable, missShaderBindingTable, hitShaderBindingTable;
 
-    Vk vk => rayDevice.Vk;
-    Device device => rayDevice.Device;
-
     KhrRayTracingPipeline rayPipe;
     private DescriptorPool descriptorPool;
+    private uint handleSizeAligned;
+    private DescriptorSet descriptorSet;
 
     public RayTracingPipeline(VulkanRayDevice rayDevice, TopLevelAccel topLevelAccel, ImageView storageImageView)
+    : base(rayDevice)
     {
-        this.rayDevice = rayDevice;
-
         if (!vk.TryGetDeviceExtension(rayDevice.Instance, device, out rayPipe))
             throw new NotSupportedException($"{KhrRayTracingPipeline.ExtensionName} extension not found.");
 
@@ -210,7 +207,7 @@ unsafe class RayTracingPipeline : IDisposable
 
         // Create the shader binding table
         uint handleSize = rayPipeProps.ShaderGroupHandleSize;
-        uint handleSizeAligned = AlignedSize(rayPipeProps.ShaderGroupHandleSize, rayPipeProps.ShaderGroupHandleAlignment);
+        handleSizeAligned = AlignedSize(rayPipeProps.ShaderGroupHandleSize, rayPipeProps.ShaderGroupHandleAlignment);
         uint sbtSize = groupCount * handleSizeAligned;
 
         byte[] shaderHandleStorage = new byte[sbtSize];
@@ -257,7 +254,7 @@ unsafe class RayTracingPipeline : IDisposable
             DescriptorSetCount = 1,
             PSetLayouts = &descSet
         };
-        CheckResult(vk.AllocateDescriptorSets(device, &descriptorSetAllocateInfo, out var descriptorSet),
+        CheckResult(vk.AllocateDescriptorSets(device, &descriptorSetAllocateInfo, out descriptorSet),
             nameof(vk.AllocateDescriptorSets));
 
         var topLvl = topLevelAccel.Handle;
@@ -314,6 +311,46 @@ unsafe class RayTracingPipeline : IDisposable
         vk.UpdateDescriptorSets(device, numDescriptorSets, writeDescriptorSets, 0, null);
     }
 
+    public void MakeCommands(CommandBuffer commandBuffer, uint width, uint height)
+    {
+        StridedDeviceAddressRegionKHR raygenShaderSbtEntry = new()
+        {
+            DeviceAddress = raygenShaderBindingTable.DeviceAddress,
+            Stride = handleSizeAligned,
+            Size = handleSizeAligned
+        };
+
+        StridedDeviceAddressRegionKHR missShaderSbtEntry = new()
+        {
+            DeviceAddress = missShaderBindingTable.DeviceAddress,
+            Stride = handleSizeAligned,
+            Size = handleSizeAligned
+        };
+
+        StridedDeviceAddressRegionKHR hitShaderSbtEntry = new()
+        {
+            DeviceAddress = hitShaderBindingTable.DeviceAddress,
+            Stride = handleSizeAligned,
+            Size = handleSizeAligned
+        };
+
+        StridedDeviceAddressRegionKHR callableShaderSbtEntry = new();
+
+        vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.RayTracingKhr, pipeline);
+        var descSet = descriptorSet;
+        vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.RayTracingKhr, pipelineLayout, 0, 1, &descSet, 0, 0);
+
+        rayPipe.CmdTraceRays(
+            commandBuffer,
+            &raygenShaderSbtEntry,
+            &missShaderSbtEntry,
+            &hitShaderSbtEntry,
+            &callableShaderSbtEntry,
+            width,
+            height,
+            1);
+    }
+
     public void Dispose()
     {
         vk.DestroyDescriptorPool(device, descriptorPool, null);
@@ -323,6 +360,7 @@ unsafe class RayTracingPipeline : IDisposable
         rgenShader.Dispose();
         rmissShader.Dispose();
         rchitShader.Dispose();
+        vk.DestroyPipeline(device, pipeline, null);
         vk.DestroyPipelineLayout(device, pipelineLayout, null);
         vk.DestroyDescriptorSetLayout(device, descriptorSetLayout, null);
         rayPipe.Dispose();
