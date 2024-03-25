@@ -20,7 +20,7 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
     private VulkanBuffer uniformBuffer;
 
     public RayTracingPipeline(VulkanRayDevice rayDevice, TopLevelAccel topLevelAccel, ImageView storageImageView,
-        Matrix4x4 camToWorld, Matrix4x4 viewToCam)
+        Matrix4x4 camToWorld, Matrix4x4 viewToCam, ShaderDirectory shaderDirectory)
     : base(rayDevice)
     {
         if (!vk.TryGetDeviceExtension(rayDevice.Instance, device, out rayPipe))
@@ -83,7 +83,7 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
         var shaderStages = stackalloc PipelineShaderStageCreateInfo[(int)numStages];
         var shaderGroups = stackalloc RayTracingShaderGroupCreateInfoKHR[(int)numStages];
 
-        rgenShader = new Shader(rayDevice, ReadResourceText("Shaders.raygen.rgen"), "rgen");
+        rgenShader = new Shader(rayDevice, shaderDirectory.ShaderCodes["raygen.rgen"]);
 
         shaderStages[i] = new()
         {
@@ -103,8 +103,7 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
         };
         ++i;
 
-
-        rmissShader = new Shader(rayDevice, ReadResourceText("Shaders.miss.rmiss"), "rmiss");
+        rmissShader = new Shader(rayDevice, shaderDirectory.ShaderCodes["miss.rmiss"]);
         shaderStages[i] = new()
         {
             SType = StructureType.PipelineShaderStageCreateInfo,
@@ -123,7 +122,7 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
         };
         ++i;
 
-        rchitShader = new Shader(rayDevice, ReadResourceText("Shaders.hit.rchit"), "rchit");
+        rchitShader = new Shader(rayDevice, shaderDirectory.ShaderCodes["hit.rchit"]);
         shaderStages[i] = new()
         {
             SType = StructureType.PipelineShaderStageCreateInfo,

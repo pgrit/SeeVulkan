@@ -14,6 +14,12 @@ unsafe class Shader : IDisposable
         ShaderModule = CreateShaderModule(CompileShader(code, ext));
     }
 
+    public Shader(VulkanRayDevice device, byte[] code)
+    {
+        rayDevice = device;
+        ShaderModule = CreateShaderModule(code);
+    }
+
     public void Dispose()
     {
         vk.DestroyShaderModule(device, ShaderModule, null);
@@ -34,7 +40,7 @@ unsafe class Shader : IDisposable
         }
     }
 
-    byte[] CompileShader(string code, string ext)
+    public static byte[] CompileShader(string code, string ext)
     {
         var guid = Guid.NewGuid();
         string infile = $"{guid}.{ext}";
@@ -55,6 +61,29 @@ unsafe class Shader : IDisposable
         finally
         {
             if (File.Exists(infile)) File.Delete(infile);
+            if (File.Exists(outfile)) File.Delete(outfile);
+        }
+
+        return bytes;
+    }
+
+    public static byte[] CompileShader(string filename)
+    {
+        var guid = Guid.NewGuid();
+        string outfile = $"{guid}.spv";
+
+        byte[] bytes = null;
+        try
+        {
+            string glslcExe = "glslc"; // TODO assumes it is in the path - better solution?
+            var p = System.Diagnostics.Process.Start(glslcExe, ["--target-env=vulkan1.3", filename, "-o", outfile]);
+            p.WaitForExit();
+            if (p.ExitCode != 0)
+                throw new Exception("glslc shader compilation failed");
+            bytes = File.ReadAllBytes(outfile);
+        }
+        finally
+        {
             if (File.Exists(outfile)) File.Delete(outfile);
         }
 

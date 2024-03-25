@@ -20,7 +20,8 @@ unsafe class ToneMapPipeline : VulkanComponent, IDisposable
         vk.DestroyDescriptorSetLayout(device, descriptorSetLayout, null);
     }
 
-    public ToneMapPipeline(VulkanRayDevice rayDevice, StorageImage renderImage, StorageImage toneMappedImage, bool swapChainIsLinear)
+    public ToneMapPipeline(VulkanRayDevice rayDevice, StorageImage renderImage, StorageImage toneMappedImage,
+        bool swapChainIsLinear, ShaderDirectory shaderDirectory)
     : base(rayDevice)
     {
         var bindings = stackalloc DescriptorSetLayoutBinding[] {
@@ -66,7 +67,7 @@ unsafe class ToneMapPipeline : VulkanComponent, IDisposable
             CheckResult(vk.CreatePipelineLayout(device, pipelineLayoutCI, null, out pipelineLayout), nameof(vk.CreatePipelineLayout));
         }
 
-        tmShader = new Shader(rayDevice, ReadResourceText("Shaders.tonemap.comp"), "comp");
+        tmShader = new Shader(rayDevice, shaderDirectory.ShaderCodes["tonemap.comp"]);
 
         ComputePipelineCreateInfo computePipelineCreateInfo = new()
         {

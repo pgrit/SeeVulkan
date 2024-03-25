@@ -61,7 +61,7 @@ void main()
     const ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
     vec4 rgba = imageLoad(inputImage, pixel);
 
-    // rgba = rgba / (rgba + 1.0);
+    // rgba = rgba / (rgba + 1.0) * 2.0;
 
     if (!linearOutput)
         rgba = vec4(LinearToSrgb(rgba.x), LinearToSrgb(rgba.y), LinearToSrgb(rgba.z), rgba.w);

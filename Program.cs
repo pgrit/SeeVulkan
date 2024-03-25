@@ -14,7 +14,7 @@ window.MakeCornersSquare();
 if (window.VkSurface is null)
     throw new Exception("Windowing platform doesn't support Vulkan.");
 
-var scene = SceneRegistry.LoadScene("RoughGlassesIndirect").MakeScene();
+var scene = SceneRegistry.LoadScene("CornellBox").MakeScene();
 List<Mesh> meshes = [];
 foreach (var m in scene.Meshes)
     meshes.Add(new(m.Vertices, m.Indices.Select(i => (uint)i).ToArray()));
@@ -24,7 +24,7 @@ camera.UpdateResolution(window.Size.X, window.Size.Y);
 var camToWorld = camera.CameraToWorld;
 var viewToCam = camera.ViewToCamera;
 
-var renderer = new Renderer(window, meshes.ToArray(), camToWorld, viewToCam);
+var renderer = new Renderer(window, meshes.ToArray(), camToWorld, viewToCam, ShaderDirectory.MakeRelativeToScript("./Shaders"));
 
 var input = window.CreateInput();
 for (int i = 0; i < input.Keyboards.Count; i++)

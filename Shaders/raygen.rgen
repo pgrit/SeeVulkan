@@ -8,7 +8,10 @@ layout(binding = 2, set = 0) uniform UniformBufferObject {
     mat4 viewToCam;
 } ubo;
 
-layout(location = 0) rayPayloadEXT vec3 hitValue;
+struct RayPayload {
+    vec3 weight;
+};
+layout(location = 0) rayPayloadEXT RayPayload payload;
 
 void main()
 {
@@ -25,10 +28,9 @@ void main()
     float tmin = 0.0;
     float tmax = 10000.0;
 
-    hitValue = vec3(0);
+    payload.weight = vec3(0);
 
     traceRayEXT(topLevelAS, gl_RayFlagsOpaqueEXT, 0xff, 0, 0, 0, origin.xyz, tmin, direction.xyz, tmax, 0);
 
-    imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(hitValue, 1.0));
-    // imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(origin.xyz, 1.0));
+    imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(payload.weight, 1.0));
 }

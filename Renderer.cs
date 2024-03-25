@@ -25,7 +25,7 @@ class Renderer : IDisposable
         img.WriteToFile(filename);
     }
 
-    public Renderer(IWindow window, ReadOnlySpan<Mesh> meshes, Matrix4x4 camToWorld, Matrix4x4 viewToCam)
+    public Renderer(IWindow window, ReadOnlySpan<Mesh> meshes, Matrix4x4 camToWorld, Matrix4x4 viewToCam, ShaderDirectory shaderDirectory)
     {
         device = new VulkanRayDevice(window);
         swapChain = new SwapChain(device);
@@ -39,8 +39,8 @@ class Renderer : IDisposable
 
         topLevelAccel = new TopLevelAccel(device, meshAccels);
 
-        rtPipe = new RayTracingPipeline(device, topLevelAccel, renderTarget.ImageView, camToWorld, viewToCam);
-        tmPipe = new ToneMapPipeline(device, renderTarget, toneMapTarget, swapChain.IsLinearColorSpace);
+        rtPipe = new RayTracingPipeline(device, topLevelAccel, renderTarget.ImageView, camToWorld, viewToCam, shaderDirectory);
+        tmPipe = new ToneMapPipeline(device, renderTarget, toneMapTarget, swapChain.IsLinearColorSpace, shaderDirectory);
         pipe = new RenderPipeline(device, swapChain, rtPipe, tmPipe, renderTarget, toneMapTarget);
 
         swapChain.OnRecreate += () =>
@@ -54,8 +54,8 @@ class Renderer : IDisposable
             tmPipe.Dispose();
             pipe.Dispose();
             // TODO update camera parameters based on new resolution - callback instead of direct matrix transfer?
-            rtPipe = new RayTracingPipeline(device, topLevelAccel, renderTarget.ImageView, camToWorld, viewToCam);
-            tmPipe = new ToneMapPipeline(device, renderTarget, toneMapTarget, swapChain.IsLinearColorSpace);
+            rtPipe = new RayTracingPipeline(device, topLevelAccel, renderTarget.ImageView, camToWorld, viewToCam, shaderDirectory);
+            tmPipe = new ToneMapPipeline(device, renderTarget, toneMapTarget, swapChain.IsLinearColorSpace, shaderDirectory);
             pipe = new RenderPipeline(device, swapChain, rtPipe, tmPipe, renderTarget, toneMapTarget);
         };
 
@@ -63,6 +63,10 @@ class Renderer : IDisposable
 
         double fpsInterval = 1.0;
         double timeToFpsUpdate = fpsInterval;
+
+        double shaderInterval = 4;
+        double timeToShaderScan = shaderInterval;
+
         window.Render += elapsed =>
         {
             swapChain.DrawFrame(elapsed);
@@ -73,6 +77,13 @@ class Renderer : IDisposable
                 double fps = 1.0 / (elapsed / 1.0);
                 timeToFpsUpdate = fpsInterval;
                 window.Title = $"SeeVulkan - {fps:.} fps";
+            }
+
+            timeToShaderScan -= elapsed;
+            if (timeToShaderScan < 0.0)
+            {
+                if (shaderDirectory.ScanForUpdates())
+                    swapChain.NotifyResize(); // TODO we don't need to realloc everything... but this is safe and easy
             }
         };
     }
