@@ -15,8 +15,10 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
     private DescriptorPool descriptorPool;
     private uint handleSizeAligned;
     private DescriptorSet descriptorSet;
+    private VulkanBuffer uniformBuffer;
 
-    public RayTracingPipeline(VulkanRayDevice rayDevice, TopLevelAccel topLevelAccel, ImageView storageImageView)
+    public RayTracingPipeline(VulkanRayDevice rayDevice, TopLevelAccel topLevelAccel, ImageView storageImageView,
+        Matrix4x4 camToWorld, Matrix4x4 viewToCam)
     : base(rayDevice)
     {
         if (!vk.TryGetDeviceExtension(rayDevice.Instance, device, out rayPipe))
@@ -47,15 +49,15 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
                 DescriptorCount = 1,
                 StageFlags = ShaderStageFlags.RaygenBitKhr
             },
-            // new()
-            // {
-            //     Binding = 2,
-            //     DescriptorType = DescriptorType.UniformBuffer,
-            //     DescriptorCount = 1,
-            //     StageFlags = ShaderStageFlags.RaygenBitKhr
-            // }
+            new()
+            {
+                Binding = 2,
+                DescriptorType = DescriptorType.UniformBuffer,
+                DescriptorCount = 1,
+                StageFlags = ShaderStageFlags.RaygenBitKhr
+            }
         };
-        uint numBindings = 2; // TODO don't forget to update in tandem
+        uint numBindings = 3;
         DescriptorSetLayoutCreateInfo descSetCreateInfo = new()
         {
             SType =  StructureType.DescriptorSetLayoutCreateInfo,
@@ -86,25 +88,34 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
 
             layout(binding = 0, set = 0) uniform accelerationStructureEXT topLevelAS;
             layout(binding = 1, set = 0, rgba32f) uniform image2D image;
+            layout(binding = 2, set = 0) uniform UniformBufferObject {
+                mat4 camToWorld;
+                mat4 viewToCam;
+            } ubo;
 
             layout(location = 0) rayPayloadEXT vec3 hitValue;
 
             void main()
             {
                 const vec2 pixelCenter = vec2(gl_LaunchIDEXT.xy) + vec2(0.5);
-                const vec2 imagePos = pixelCenter / vec2(gl_LaunchSizeEXT.xy) * 2.0 - 1.0;
-
-                vec4 origin = vec4(imagePos.x, imagePos.y, -10, 1);
-                vec4 direction = vec4(0, 0, 1, 1);
+                const vec2 view = vec2(
+                    pixelCenter.x / gl_LaunchSizeEXT.x * 2.0 - 1.0,
+                    1.0 - pixelCenter.y / gl_LaunchSizeEXT.y * 2.0
+                );
+                vec4 localDir = ubo.viewToCam * vec4(view.xy, 0.0, 1.0);
+                vec4 worldDir = ubo.camToWorld * vec4(localDir.xyz, 0.0);
+                vec4 direction = vec4(normalize(worldDir.xyz), 0);
+                vec4 origin = ubo.camToWorld * vec4(0, 0, 0, 1);
 
                 float tmin = 0.0;
                 float tmax = 10000.0;
 
-                hitValue = vec3(0.0);
+                hitValue = vec3(0);
 
                 traceRayEXT(topLevelAS, gl_RayFlagsOpaqueEXT, 0xff, 0, 0, 0, origin.xyz, tmin, direction.xyz, tmax, 0);
 
-                imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(hitValue, 0.0));
+                imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(hitValue, 1.0));
+                // imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(origin.xyz, 1.0));
             }
             """, "rgen");
 
@@ -233,16 +244,17 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
                 Type = DescriptorType.StorageImage,
                 DescriptorCount = 1
             },
-            // new() {
-            //     Type = DescriptorType.UniformBuffer,
-            //     DescriptorCount = 1
-            // },
+            new() {
+                Type = DescriptorType.UniformBuffer,
+                DescriptorCount = 1
+            },
         };
+        uint numPoolSizes = 3;
 
         DescriptorPoolCreateInfo descriptorPoolCreateInfo = new() {
             SType = StructureType.DescriptorPoolCreateInfo,
             MaxSets = 1,
-            PoolSizeCount = 2, // TODO make sure not to forget me :(
+            PoolSizeCount = numPoolSizes,
             PPoolSizes = poolSizes
         };
         CheckResult(vk.CreateDescriptorPool(device, &descriptorPoolCreateInfo, null, out descriptorPool),
@@ -291,22 +303,44 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
             PImageInfo = &storageImageDescriptor
         };
 
-        // WriteDescriptorSet uniformBufferWrite = new()
-        // {
-        //     SType = StructureType.WriteDescriptorSet,
-        //     DstSet = descriptorSet,
-        //     DescriptorType = DescriptorType.UniformBuffer,
-        //     DstBinding = 2,
-        //     DescriptorCount = 1,
-        //     PBufferInfo = &uniformDescriptor
-        // }
+        Span<float> matrixData = stackalloc float[4*4*2];
+        i = 0;
+        for (int row = 0; row < 4; ++row)
+            for (int col = 0; col < 4; ++col)
+                matrixData[(int)i++] = camToWorld[row, col];
+        for (int row = 0; row < 4; ++row)
+            for (int col = 0; col < 4; ++col)
+                matrixData[(int)i++] = viewToCam[row, col];
+
+        uniformBuffer = VulkanBuffer.Make<float>(rayDevice,
+            BufferUsageFlags.UniformBufferBit,
+            MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+            matrixData
+        );
+
+        DescriptorBufferInfo uniformDescriptor = new()
+        {
+            Buffer = uniformBuffer.Buffer,
+            Offset = 0,
+            Range = (ulong)matrixData.Length * sizeof(float)
+        };
+
+        WriteDescriptorSet uniformBufferWrite = new()
+        {
+            SType = StructureType.WriteDescriptorSet,
+            DstSet = descriptorSet,
+            DescriptorType = DescriptorType.UniformBuffer,
+            DstBinding = 2,
+            DescriptorCount = 1,
+            PBufferInfo = &uniformDescriptor
+        };
 
         var writeDescriptorSets = stackalloc WriteDescriptorSet[] {
             accelerationStructureWrite,
             resultImageWrite,
-            // uniformBufferWrite
+            uniformBufferWrite
         };
-        uint numDescriptorSets = 2;
+        uint numDescriptorSets = 3;
 
         vk.UpdateDescriptorSets(device, numDescriptorSets, writeDescriptorSets, 0, null);
     }
@@ -353,6 +387,7 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
 
     public void Dispose()
     {
+        uniformBuffer.Dispose();
         vk.DestroyDescriptorPool(device, descriptorPool, null);
         raygenShaderBindingTable.Dispose();
         missShaderBindingTable.Dispose();

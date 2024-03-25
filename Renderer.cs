@@ -13,7 +13,7 @@ class Renderer : IDisposable
 
     MeshAccel[] meshAccels;
 
-    public Renderer(IWindow window, ReadOnlySpan<Mesh> meshes)
+    public Renderer(IWindow window, ReadOnlySpan<Mesh> meshes, Matrix4x4 camToWorld, Matrix4x4 viewToCam)
     {
         device = new VulkanRayDevice(window);
         swapChain = new SwapChain(device);
@@ -27,7 +27,7 @@ class Renderer : IDisposable
 
         topLevelAccel = new TopLevelAccel(device, meshAccels);
 
-        rtPipe = new RayTracingPipeline(device, topLevelAccel, renderTarget.ImageView);
+        rtPipe = new RayTracingPipeline(device, topLevelAccel, renderTarget.ImageView, camToWorld, viewToCam);
         tmPipe = new ToneMapPipeline(device, renderTarget, toneMapTarget, swapChain.IsLinearColorSpace);
         pipe = new RenderPipeline(device, swapChain, rtPipe, tmPipe, renderTarget, toneMapTarget);
 
@@ -41,14 +41,15 @@ class Renderer : IDisposable
             rtPipe.Dispose();
             tmPipe.Dispose();
             pipe.Dispose();
-            rtPipe = new RayTracingPipeline(device, topLevelAccel, renderTarget.ImageView);
+            // TODO update camera parameters based on new resolution - callback instead of direct matrix transfer?
+            rtPipe = new RayTracingPipeline(device, topLevelAccel, renderTarget.ImageView, camToWorld, viewToCam);
             tmPipe = new ToneMapPipeline(device, renderTarget, toneMapTarget, swapChain.IsLinearColorSpace);
             pipe = new RenderPipeline(device, swapChain, rtPipe, tmPipe, renderTarget, toneMapTarget);
         };
 
         window.FramebufferResize += newSize => swapChain.NotifyResize();
 
-        double fpsInterval = 2.0;
+        double fpsInterval = 1.0;
         double timeToFpsUpdate = fpsInterval;
         window.Render += elapsed =>
         {
@@ -58,8 +59,10 @@ class Renderer : IDisposable
             if (timeToFpsUpdate < 0.0)
             {
                 double fps = 1.0 / (elapsed / 1.0);
-                Console.WriteLine(fps);
                 timeToFpsUpdate = fpsInterval;
+                window.Title = $"SeeVulkan - {fps:.} fps";
+
+                renderTarget.CopyToHost();
             }
         };
     }

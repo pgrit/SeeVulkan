@@ -12,4 +12,8 @@
     <PackageReference Include="Silk.NET.Vulkan.Extensions.EXT" Version="2.20.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\Repositories\SeeSharp\SeeSharp\SeeSharp.csproj" />
+  </ItemGroup>
+
 </Project>

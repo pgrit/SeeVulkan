@@ -5,6 +5,8 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Silk.NET.Rays", "Silk.NET.Rays.csproj", "{A5154AD0-BC17-4029-9FF6-952CFD49AE42}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SeeSharp", "..\..\Repositories\SeeSharp\SeeSharp\SeeSharp.csproj", "{C4C3DE14-5409-413E-80D1-FA62D441B432}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -18,5 +20,9 @@ Global
 		{A5154AD0-BC17-4029-9FF6-952CFD49AE42}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A5154AD0-BC17-4029-9FF6-952CFD49AE42}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A5154AD0-BC17-4029-9FF6-952CFD49AE42}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C4C3DE14-5409-413E-80D1-FA62D441B432}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C4C3DE14-5409-413E-80D1-FA62D441B432}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C4C3DE14-5409-413E-80D1-FA62D441B432}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C4C3DE14-5409-413E-80D1-FA62D441B432}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

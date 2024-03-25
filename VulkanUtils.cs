@@ -3,6 +3,7 @@ namespace SeeVulkan;
 class VulkanUtils
 {
     public const uint VK_SHADER_UNUSED_KHR = ~0U;
+    public const ulong VK_WHOLE_SIZE = ~0UL;
 
     public static void CheckResult(Result result, string methodName)
     {
