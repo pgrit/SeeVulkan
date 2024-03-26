@@ -16,8 +16,7 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
     private uint handleSizeAligned;
     private DescriptorSet descriptorSet;
     private VulkanBuffer uniformBuffer;
-    private VulkanBuffer addressBuffer;
-
+    private VulkanBuffer perMeshDataBuffer;
 
     public RayTracingPipeline(VulkanRayDevice rayDevice, TopLevelAccel topLevelAccel, ImageView storageImageView,
         Matrix4x4 camToWorld, Matrix4x4 viewToCam, ShaderDirectory shaderDirectory, MeshAccel[] meshAccels)
@@ -70,16 +69,17 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
 
         // Buffer that holds all device addresses of all vertex and index buffers. It's address in turn is
         // given to the shader as a push constant
-        BufferReferences[] addrs = new BufferReferences[meshAccels.Length];
+        PerMeshData[] addrs = new PerMeshData[meshAccels.Length];
         for (int k = 0; k < addrs.Length; ++k)
         {
             addrs[k] = new()
             {
                 VertexBufferAddress = meshAccels[k].VertexBuffer.DeviceAddress,
                 IndexBufferAddress = meshAccels[k].IndexBuffer.DeviceAddress,
+                MaterialId = (uint)meshAccels[k].Mesh.MaterialId,
             };
         }
-        addressBuffer = VulkanBuffer.Make<BufferReferences>(rayDevice,
+        perMeshDataBuffer = VulkanBuffer.Make<PerMeshData>(rayDevice,
             BufferUsageFlags.ShaderDeviceAddressBit,
             MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
             addrs
@@ -89,7 +89,7 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
         {
             StageFlags = ShaderStageFlags.ClosestHitBitKhr | ShaderStageFlags.AnyHitBitKhr,
             Offset = 0,
-            Size = sizeof(ulong)
+            Size = sizeof(ulong) // The device address of the per-mesh data buffer
         };
 
         var descSet = descriptorSetLayout;
@@ -310,9 +310,10 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
         vk.UpdateDescriptorSets(device, numDescriptorSets, writeDescriptorSets, 0, null);
     }
 
-    struct BufferReferences {
+    struct PerMeshData {
         public ulong VertexBufferAddress;
         public ulong IndexBufferAddress;
+        public uint MaterialId;
     }
 
     public void MakeCommands(CommandBuffer commandBuffer, uint width, uint height)
@@ -344,7 +345,7 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
         var descSet = descriptorSet;
         vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.RayTracingKhr, pipelineLayout, 0, 1, &descSet, 0, 0);
 
-        ulong addr = addressBuffer.DeviceAddress;
+        ulong addr = perMeshDataBuffer.DeviceAddress;
         vk.CmdPushConstants(commandBuffer, pipelineLayout,
             ShaderStageFlags.ClosestHitBitKhr | ShaderStageFlags.AnyHitBitKhr,
             0, sizeof(ulong), &addr);
@@ -362,7 +363,7 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
 
     public void Dispose()
     {
-        addressBuffer.Dispose();
+        perMeshDataBuffer.Dispose();
         uniformBuffer.Dispose();
         vk.DestroyDescriptorPool(device, descriptorPool, null);
         raygenShaderBindingTable.Dispose();

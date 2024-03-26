@@ -38,8 +38,8 @@ unsafe class SwapChain : VulkanComponent, IDisposable
         // TODO requesting ExtendedSrgb on Windows automatically turns HDR mode on. This might not be desired
         //      by the user, so we should find a way to only pick these color spaces if HDR is already on
         (Format Format, ColorSpaceKHR ColorSpace)[] preferredFormats = [
-            // (Format.R32G32B32A32Sfloat, ColorSpaceKHR.SpaceExtendedSrgbLinearExt),
-            // (Format.R16G16B16A16Sfloat, ColorSpaceKHR.SpaceExtendedSrgbLinearExt),
+            (Format.R32G32B32A32Sfloat, ColorSpaceKHR.SpaceExtendedSrgbLinearExt),
+            (Format.R16G16B16A16Sfloat, ColorSpaceKHR.SpaceExtendedSrgbLinearExt),
             (Format.B8G8R8A8Unorm, ColorSpaceKHR.SpaceSrgbNonlinearKhr)
         ];
 

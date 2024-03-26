@@ -4,6 +4,8 @@ unsafe class MeshAccel : RayAccelBase, IDisposable
 {
     uint numTriangles;
 
+    public Mesh Mesh;
+
     public VulkanBuffer VertexBuffer;
     public VulkanBuffer IndexBuffer;
     VulkanBuffer transformBuffer;
@@ -11,6 +13,7 @@ unsafe class MeshAccel : RayAccelBase, IDisposable
     public MeshAccel(VulkanRayDevice rayDevice, Mesh mesh)
     : base(rayDevice)
     {
+        Mesh = mesh;
         numTriangles = (uint)mesh.Indices.Length / 3;
 
         TransformMatrixKHR matrix;

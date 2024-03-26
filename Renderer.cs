@@ -1,3 +1,6 @@
+using System.Net.Sockets;
+using SeeSharp.Common;
+
 namespace SeeVulkan;
 
 class Renderer : IDisposable
@@ -16,7 +19,14 @@ class Renderer : IDisposable
     public void SendToTev()
     {
         var img = renderTarget.CopyToHost();
-        SimpleImageIO.TevIpc.ShowImage("SeeVulkan", img);
+        try
+        {
+            SimpleImageIO.TevIpc.ShowImage("SeeVulkan", img);
+        }
+        catch(SocketException)
+        {
+            Logger.Warning("Could not reach tev on localhost using the default port. Is it running?");
+        }
     }
 
     public void SaveToFile(string filename = "SeeVulkan.exr")

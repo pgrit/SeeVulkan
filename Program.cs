@@ -16,9 +16,11 @@ if (window.VkSurface is null)
 
 var scene = SceneRegistry.LoadScene("HomeOffice").MakeScene();
 
+MaterialLibrary materialLibrary = new();
+
 var meshes = new Mesh[scene.Meshes.Count];
 for (int i = 0; i < scene.Meshes.Count; ++i)
-    meshes[i] = new(scene.Meshes[i]);
+    meshes[i] = new(scene.Meshes[i], materialLibrary);
 
 var camera = scene.Camera as PerspectiveCamera;
 camera.UpdateResolution(window.Size.X, window.Size.Y);

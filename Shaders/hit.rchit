@@ -17,4 +17,5 @@ void main()
 
     payload.weight = vec3(hit.uv, 0.5);
     // payload.weight = vec3(abs(dot(hit.normal, -gl_WorldRayDirectionEXT)));
+    payload.weight = vec3(hit.materialId * 0.1);
 }

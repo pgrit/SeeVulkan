@@ -5,13 +5,14 @@ layout(push_constant) uniform AddrBufferAddr {
     uint64_t addr;
 } addrBuffer;
 
-struct BufferReferences {
+struct PerMeshData {
     uint64_t vertexBufferAddress;
     uint64_t indexBufferAddress;
+    uint materialId;
 };
 
 layout(buffer_reference, scalar) buffer MeshBufferRefs {
-    BufferReferences r[];
+    PerMeshData r[];
 };
 
 struct Vertex {
@@ -32,6 +33,7 @@ struct HitData {
     vec3 pos;
     vec3 normal;
     vec2 uv;
+    uint materialId;
 };
 
 HitData computeHitData() {
@@ -39,7 +41,7 @@ HitData computeHitData() {
     const int meshId = gl_InstanceID;
 
     MeshBufferRefs refs = MeshBufferRefs(addrBuffer.addr);
-    BufferReferences meshBufs = refs.r[meshId];
+    PerMeshData meshBufs = refs.r[meshId];
     Vertices verts = Vertices(meshBufs.vertexBufferAddress);
     Indices indices = Indices(meshBufs.indexBufferAddress);
     Vertex v1 = verts.v[indices.i[primId * 3 + 0]];
@@ -60,5 +62,5 @@ HitData computeHitData() {
 
     vec3 hitp = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
 
-    return HitData(hitp, normal, uv);
+    return HitData(hitp, normal, uv, meshBufs.materialId);
 }
