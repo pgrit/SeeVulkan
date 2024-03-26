@@ -4,14 +4,14 @@ unsafe class MeshAccel : RayAccelBase, IDisposable
 {
     uint numTriangles;
 
-    VulkanBuffer vertexBuffer;
-    VulkanBuffer indexBuffer;
+    public VulkanBuffer VertexBuffer;
+    public VulkanBuffer IndexBuffer;
     VulkanBuffer transformBuffer;
 
-    public MeshAccel(VulkanRayDevice rayDevice, ReadOnlySpan<Vector3> vertices, ReadOnlySpan<uint> indices)
+    public MeshAccel(VulkanRayDevice rayDevice, Mesh mesh)
     : base(rayDevice)
     {
-        numTriangles = (uint)indices.Length / 3;
+        numTriangles = (uint)mesh.Indices.Length / 3;
 
         TransformMatrixKHR matrix;
         new Span<float>(matrix.Matrix, 12).Clear();
@@ -19,16 +19,16 @@ unsafe class MeshAccel : RayAccelBase, IDisposable
         matrix.Matrix[5] = 1.0f;
         matrix.Matrix[10] = 1.0f;
 
-        vertexBuffer = VulkanBuffer.Make(rayDevice,
+        VertexBuffer = VulkanBuffer.Make<Mesh.Vertex>(rayDevice,
             BufferUsageFlags.ShaderDeviceAddressBit | BufferUsageFlags.AccelerationStructureBuildInputReadOnlyBitKhr,
             MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
-            vertices
+            mesh.Vertices
         );
 
-        indexBuffer = VulkanBuffer.Make(rayDevice,
+        IndexBuffer = VulkanBuffer.Make<int>(rayDevice,
             BufferUsageFlags.ShaderDeviceAddressBit | BufferUsageFlags.AccelerationStructureBuildInputReadOnlyBitKhr,
             MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
-            indices
+            mesh.Indices
         );
 
         transformBuffer = VulkanBuffer.Make<float>(rayDevice,
@@ -45,11 +45,11 @@ unsafe class MeshAccel : RayAccelBase, IDisposable
                 Triangles = new() {
                     SType = StructureType.AccelerationStructureGeometryTrianglesDataKhr,
                     VertexFormat = Format.R32G32B32Sfloat,
-                    VertexData = new(vertexBuffer.DeviceAddress),
-                    MaxVertex = (uint)vertices.Length - 1,
-                    VertexStride = (ulong)sizeof(Vector3),
+                    VertexData = new(VertexBuffer.DeviceAddress),
+                    MaxVertex = (uint)mesh.Vertices.Length - 1,
+                    VertexStride = (ulong)sizeof(Mesh.Vertex),
                     IndexType = IndexType.Uint32,
-                    IndexData = new(indexBuffer.DeviceAddress),
+                    IndexData = new(IndexBuffer.DeviceAddress),
                     TransformData = new(transformBuffer.DeviceAddress)
                 }
             },
@@ -124,8 +124,8 @@ unsafe class MeshAccel : RayAccelBase, IDisposable
     public void Dispose()
     {
         bottomLvlAccelBuffer.Dispose();
-        vertexBuffer.Dispose();
-        indexBuffer.Dispose();
+        VertexBuffer.Dispose();
+        IndexBuffer.Dispose();
         transformBuffer.Dispose();
 
         accel.DestroyAccelerationStructure(device, accelStructHandle, null);

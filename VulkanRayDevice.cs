@@ -256,7 +256,9 @@ unsafe class VulkanRayDevice : IDisposable
         {
             SType = StructureType.PhysicalDeviceFeatures2,
             PNext = &vulkan13Features,
-            Features = new PhysicalDeviceFeatures()
+            Features = new PhysicalDeviceFeatures() {
+                ShaderInt64 = true
+            }
         };
 
         DeviceCreateInfo createInfo = new()

@@ -14,17 +14,18 @@ window.MakeCornersSquare();
 if (window.VkSurface is null)
     throw new Exception("Windowing platform doesn't support Vulkan.");
 
-var scene = SceneRegistry.LoadScene("CornellBox").MakeScene();
-List<Mesh> meshes = [];
-foreach (var m in scene.Meshes)
-    meshes.Add(new(m.Vertices, m.Indices.Select(i => (uint)i).ToArray()));
+var scene = SceneRegistry.LoadScene("HomeOffice").MakeScene();
+
+var meshes = new Mesh[scene.Meshes.Count];
+for (int i = 0; i < scene.Meshes.Count; ++i)
+    meshes[i] = new(scene.Meshes[i]);
 
 var camera = scene.Camera as PerspectiveCamera;
 camera.UpdateResolution(window.Size.X, window.Size.Y);
 var camToWorld = camera.CameraToWorld;
 var viewToCam = camera.ViewToCamera;
 
-var renderer = new Renderer(window, meshes.ToArray(), camToWorld, viewToCam, ShaderDirectory.MakeRelativeToScript("./Shaders"));
+var renderer = new Renderer(window, meshes, camToWorld, viewToCam, ShaderDirectory.MakeRelativeToScript("./Shaders"));
 
 var input = window.CreateInput();
 for (int i = 0; i < input.Keyboards.Count; i++)

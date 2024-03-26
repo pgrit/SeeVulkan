@@ -1,5 +1,3 @@
-using System.Reflection;
-
 namespace SeeVulkan;
 
 unsafe class RayTracingPipeline : VulkanComponent, IDisposable
@@ -18,9 +16,11 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
     private uint handleSizeAligned;
     private DescriptorSet descriptorSet;
     private VulkanBuffer uniformBuffer;
+    private VulkanBuffer addressBuffer;
+
 
     public RayTracingPipeline(VulkanRayDevice rayDevice, TopLevelAccel topLevelAccel, ImageView storageImageView,
-        Matrix4x4 camToWorld, Matrix4x4 viewToCam, ShaderDirectory shaderDirectory)
+        Matrix4x4 camToWorld, Matrix4x4 viewToCam, ShaderDirectory shaderDirectory, MeshAccel[] meshAccels)
     : base(rayDevice)
     {
         if (!vk.TryGetDeviceExtension(rayDevice.Instance, device, out rayPipe))
@@ -51,7 +51,7 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
                 DescriptorCount = 1,
                 StageFlags = ShaderStageFlags.RaygenBitKhr
             },
-            new()
+            new() // Camera matrices
             {
                 Binding = 2,
                 DescriptorType = DescriptorType.UniformBuffer,
@@ -68,12 +68,38 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
         };
         CheckResult(vk.CreateDescriptorSetLayout(device, descSetCreateInfo, null, out descriptorSetLayout), nameof(vk.CreateDescriptorSetLayout));
 
+        // Buffer that holds all device addresses of all vertex and index buffers. It's address in turn is
+        // given to the shader as a push constant
+        BufferReferences[] addrs = new BufferReferences[meshAccels.Length];
+        for (int k = 0; k < addrs.Length; ++k)
+        {
+            addrs[k] = new()
+            {
+                VertexBufferAddress = meshAccels[k].VertexBuffer.DeviceAddress,
+                IndexBufferAddress = meshAccels[k].IndexBuffer.DeviceAddress,
+            };
+        }
+        addressBuffer = VulkanBuffer.Make<BufferReferences>(rayDevice,
+            BufferUsageFlags.ShaderDeviceAddressBit,
+            MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+            addrs
+        );
+
+        PushConstantRange pushConstantRange = new()
+        {
+            StageFlags = ShaderStageFlags.ClosestHitBitKhr | ShaderStageFlags.AnyHitBitKhr,
+            Offset = 0,
+            Size = sizeof(ulong)
+        };
+
         var descSet = descriptorSetLayout;
         PipelineLayoutCreateInfo pipelineLayoutCI = new()
         {
             SType = StructureType.PipelineLayoutCreateInfo,
             SetLayoutCount = 1,
-            PSetLayouts = &descSet
+            PSetLayouts = &descSet,
+            PushConstantRangeCount = 1,
+            PPushConstantRanges = &pushConstantRange
         };
         CheckResult(vk.CreatePipelineLayout(device, pipelineLayoutCI, null, out pipelineLayout), nameof(vk.CreatePipelineLayout));
 
@@ -241,6 +267,7 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
             PImageInfo = &storageImageDescriptor
         };
 
+        // Put the camera matrices into a uniform buffer
         Span<float> matrixData = stackalloc float[4*4*2];
         i = 0;
         for (int row = 0; row < 4; ++row)
@@ -276,11 +303,16 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
         var writeDescriptorSets = stackalloc WriteDescriptorSet[] {
             accelerationStructureWrite,
             resultImageWrite,
-            uniformBufferWrite
+            uniformBufferWrite,
         };
         uint numDescriptorSets = 3;
 
         vk.UpdateDescriptorSets(device, numDescriptorSets, writeDescriptorSets, 0, null);
+    }
+
+    struct BufferReferences {
+        public ulong VertexBufferAddress;
+        public ulong IndexBufferAddress;
     }
 
     public void MakeCommands(CommandBuffer commandBuffer, uint width, uint height)
@@ -312,6 +344,11 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
         var descSet = descriptorSet;
         vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.RayTracingKhr, pipelineLayout, 0, 1, &descSet, 0, 0);
 
+        ulong addr = addressBuffer.DeviceAddress;
+        vk.CmdPushConstants(commandBuffer, pipelineLayout,
+            ShaderStageFlags.ClosestHitBitKhr | ShaderStageFlags.AnyHitBitKhr,
+            0, sizeof(ulong), &addr);
+
         rayPipe.CmdTraceRays(
             commandBuffer,
             &raygenShaderSbtEntry,
@@ -325,6 +362,7 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
 
     public void Dispose()
     {
+        addressBuffer.Dispose();
         uniformBuffer.Dispose();
         vk.DestroyDescriptorPool(device, descriptorPool, null);
         raygenShaderBindingTable.Dispose();

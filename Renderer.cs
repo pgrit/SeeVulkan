@@ -35,11 +35,11 @@ class Renderer : IDisposable
 
         meshAccels = new MeshAccel[meshes.Length];
         for (int i = 0; i < meshes.Length; ++i)
-            meshAccels[i] = new MeshAccel(device, meshes[i].Vertices, meshes[i].Indices);
+            meshAccels[i] = new MeshAccel(device, meshes[i]);
 
         topLevelAccel = new TopLevelAccel(device, meshAccels);
 
-        rtPipe = new RayTracingPipeline(device, topLevelAccel, renderTarget.ImageView, camToWorld, viewToCam, shaderDirectory);
+        rtPipe = new RayTracingPipeline(device, topLevelAccel, renderTarget.ImageView, camToWorld, viewToCam, shaderDirectory, meshAccels);
         tmPipe = new ToneMapPipeline(device, renderTarget, toneMapTarget, swapChain.IsLinearColorSpace, shaderDirectory);
         pipe = new RenderPipeline(device, swapChain, rtPipe, tmPipe, renderTarget, toneMapTarget);
 
@@ -54,7 +54,7 @@ class Renderer : IDisposable
             tmPipe.Dispose();
             pipe.Dispose();
             // TODO update camera parameters based on new resolution - callback instead of direct matrix transfer?
-            rtPipe = new RayTracingPipeline(device, topLevelAccel, renderTarget.ImageView, camToWorld, viewToCam, shaderDirectory);
+            rtPipe = new RayTracingPipeline(device, topLevelAccel, renderTarget.ImageView, camToWorld, viewToCam, shaderDirectory, meshAccels);
             tmPipe = new ToneMapPipeline(device, renderTarget, toneMapTarget, swapChain.IsLinearColorSpace, shaderDirectory);
             pipe = new RenderPipeline(device, swapChain, rtPipe, tmPipe, renderTarget, toneMapTarget);
         };

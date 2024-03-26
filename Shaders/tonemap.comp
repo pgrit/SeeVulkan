@@ -62,6 +62,7 @@ void main()
     vec4 rgba = imageLoad(inputImage, pixel);
 
     // rgba = rgba / (rgba + 1.0) * 2.0;
+    // rgba = vec4(infernoMap(0.0, 10.0, rgba.xyz), 1.0f);
 
     if (!linearOutput)
         rgba = vec4(LinearToSrgb(rgba.x), LinearToSrgb(rgba.y), LinearToSrgb(rgba.z), rgba.w);
