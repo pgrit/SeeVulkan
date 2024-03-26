@@ -1,3 +1,5 @@
+using SimpleImageIO;
+
 namespace SeeVulkan;
 
 unsafe class RayTracingPipeline : VulkanComponent, IDisposable
@@ -17,6 +19,8 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
     private DescriptorSet descriptorSet;
     private VulkanBuffer uniformBuffer;
     private VulkanBuffer perMeshDataBuffer;
+    private VulkanBuffer materialBuffer;
+
 
     public RayTracingPipeline(VulkanRayDevice rayDevice, TopLevelAccel topLevelAccel, ImageView storageImageView,
         Matrix4x4 camToWorld, Matrix4x4 viewToCam, ShaderDirectory shaderDirectory, MeshAccel[] meshAccels)
@@ -56,9 +60,24 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
                 DescriptorType = DescriptorType.UniformBuffer,
                 DescriptorCount = 1,
                 StageFlags = ShaderStageFlags.RaygenBitKhr
+            },
+            new() // Material buffer
+            {
+                Binding = 3,
+                DescriptorType = DescriptorType.StorageBuffer,
+                DescriptorCount = 1,
+                StageFlags = ShaderStageFlags.ClosestHitBitKhr | ShaderStageFlags.AnyHitBitKhr
+            },
+            new() // Texture buffer
+            {
+                Binding = 4,
+                DescriptorType = DescriptorType.CombinedImageSampler,
+                DescriptorCount = 2,
+                StageFlags = ShaderStageFlags.ClosestHitBitKhr | ShaderStageFlags.AnyHitBitKhr,
+                PImmutableSamplers = null
             }
         };
-        uint numBindings = 3;
+        uint numBindings = 5;
         DescriptorSetLayoutCreateInfo descSetCreateInfo = new()
         {
             SType =  StructureType.DescriptorSetLayoutCreateInfo,
@@ -208,12 +227,20 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
                 Type = DescriptorType.StorageImage,
                 DescriptorCount = 1
             },
-            new() {
+            new() { // Camera matrices
                 Type = DescriptorType.UniformBuffer,
                 DescriptorCount = 1
             },
+            new() { // Material array
+                Type = DescriptorType.StorageBuffer,
+                DescriptorCount = 1
+            },
+            new() { // Texture samplers
+                Type = DescriptorType.CombinedImageSampler,
+                DescriptorCount = 2
+            },
         };
-        uint numPoolSizes = 3;
+        uint numPoolSizes = numBindings;
 
         DescriptorPoolCreateInfo descriptorPoolCreateInfo = new() {
             SType = StructureType.DescriptorPoolCreateInfo,
@@ -300,12 +327,74 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
             PBufferInfo = &uniformDescriptor
         };
 
+        // Descriptor set for the material buffer
+        ReadOnlySpan<MaterialParameters> fakeMtlData = [
+            new() {BaseColorIdx = 1}, new() { BaseColorIdx = 2}, new() {BaseColorIdx = 3}
+        ];
+        materialBuffer = VulkanBuffer.Make(rayDevice,
+            BufferUsageFlags.StorageBufferBit,
+            MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+            fakeMtlData
+        );
+
+        DescriptorBufferInfo mtlBufferDescriptor = new()
+        {
+            Buffer = materialBuffer.Buffer,
+            Offset = 0,
+            Range = (ulong)(fakeMtlData.Length * sizeof(MaterialParameters))
+        };
+
+        WriteDescriptorSet materialBufferWrite = new()
+        {
+            SType = StructureType.WriteDescriptorSet,
+            DstSet = descriptorSet,
+            DescriptorType = DescriptorType.StorageBuffer,
+            DstBinding = 3,
+            DescriptorCount = 1,
+            PBufferInfo = &mtlBufferDescriptor
+        };
+
+        // Descriptor set for the texture samplers
+        var fakeImage = new RgbImage(1, 1);
+        fakeImage.Fill(1.0f, 0.0f, 1.0f);
+        Texture fakeTexture = new(rayDevice, fakeImage);
+        var fakeImage2 = new RgbImage(1, 1);
+        fakeImage2.Fill(0.4f, 0.8f, 0.2f);
+        Texture fakeTexture2 = new(rayDevice, fakeImage2);
+
+        var textureImageInfos = stackalloc DescriptorImageInfo[] {
+            new()
+            {
+                ImageLayout = ImageLayout.ReadOnlyOptimal,
+                ImageView = fakeTexture.ImageView,
+                Sampler = fakeTexture.Sampler,
+            },
+            new()
+            {
+                ImageLayout = ImageLayout.ReadOnlyOptimal,
+                ImageView = fakeTexture2.ImageView,
+                Sampler = fakeTexture2.Sampler,
+            }
+        };
+
+        WriteDescriptorSet textureSamplerWrite = new()
+        {
+            SType = StructureType.WriteDescriptorSet,
+            DstSet = descriptorSet,
+            DescriptorType = DescriptorType.CombinedImageSampler,
+            DstBinding = 4,
+            DescriptorCount = 2,
+            PImageInfo = textureImageInfos
+        };
+
         var writeDescriptorSets = stackalloc WriteDescriptorSet[] {
             accelerationStructureWrite,
             resultImageWrite,
             uniformBufferWrite,
+            materialBufferWrite,
+            textureSamplerWrite
         };
-        uint numDescriptorSets = 3;
+        uint numDescriptorSets = numBindings;
 
         vk.UpdateDescriptorSets(device, numDescriptorSets, writeDescriptorSets, 0, null);
     }
@@ -363,6 +452,7 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
 
     public void Dispose()
     {
+        materialBuffer.Dispose();
         perMeshDataBuffer.Dispose();
         uniformBuffer.Dispose();
         vk.DestroyDescriptorPool(device, descriptorPool, null);

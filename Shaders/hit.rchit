@@ -11,11 +11,28 @@
 
 layout(location = 0) rayPayloadInEXT RayPayload payload;
 
+struct Material {
+    uint BaseColorIdx;
+    uint RoughnessIdx;
+    uint MetallicIdx;
+    float SpecularTintStrength;
+    float Anisotropic;
+    float SpecularTransmittance;
+    float IndexOfRefraction;
+    bool Thin;
+    float DiffuseTransmittance;
+};
+
+layout(binding = 3, set = 0) readonly buffer Materials { Material materials[]; };
+layout(binding = 4, set = 0) uniform sampler2D textures[];
+
 void main()
 {
     HitData hit = computeHitData();
 
     payload.weight = vec3(hit.uv, 0.5);
-    // payload.weight = vec3(abs(dot(hit.normal, -gl_WorldRayDirectionEXT)));
+    payload.weight = vec3(abs(dot(hit.normal, -gl_WorldRayDirectionEXT)));
     payload.weight = vec3(hit.materialId * 0.1);
+    payload.weight = vec3(materials[2].BaseColorIdx);
+    payload.weight = texture(textures[1], hit.uv).xyz;
 }
