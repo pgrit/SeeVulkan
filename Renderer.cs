@@ -15,6 +15,7 @@ class Renderer : IDisposable
     RenderPipeline pipe;
 
     MeshAccel[] meshAccels;
+    MaterialLibrary materialLibrary;
 
     public void SendToTev()
     {
@@ -35,8 +36,10 @@ class Renderer : IDisposable
         img.WriteToFile(filename);
     }
 
-    public Renderer(IWindow window, ReadOnlySpan<Mesh> meshes, Matrix4x4 camToWorld, Matrix4x4 viewToCam, ShaderDirectory shaderDirectory)
+    public Renderer(IWindow window, ReadOnlySpan<Mesh> meshes, Matrix4x4 camToWorld, Matrix4x4 viewToCam, ShaderDirectory shaderDirectory, MaterialLibrary materialLibrary)
     {
+        this.materialLibrary = materialLibrary;
+
         device = new VulkanRayDevice(window);
         swapChain = new SwapChain(device);
 
@@ -49,7 +52,9 @@ class Renderer : IDisposable
 
         topLevelAccel = new TopLevelAccel(device, meshAccels);
 
-        rtPipe = new RayTracingPipeline(device, topLevelAccel, renderTarget.ImageView, camToWorld, viewToCam, shaderDirectory, meshAccels);
+        materialLibrary.Prepare(device);
+
+        rtPipe = new RayTracingPipeline(device, topLevelAccel, renderTarget.ImageView, camToWorld, viewToCam, shaderDirectory, meshAccels, materialLibrary);
         tmPipe = new ToneMapPipeline(device, renderTarget, toneMapTarget, swapChain.IsLinearColorSpace, shaderDirectory);
         pipe = new RenderPipeline(device, swapChain, rtPipe, tmPipe, renderTarget, toneMapTarget);
 
@@ -64,7 +69,7 @@ class Renderer : IDisposable
             tmPipe.Dispose();
             pipe.Dispose();
             // TODO update camera parameters based on new resolution - callback instead of direct matrix transfer?
-            rtPipe = new RayTracingPipeline(device, topLevelAccel, renderTarget.ImageView, camToWorld, viewToCam, shaderDirectory, meshAccels);
+            rtPipe = new RayTracingPipeline(device, topLevelAccel, renderTarget.ImageView, camToWorld, viewToCam, shaderDirectory, meshAccels, materialLibrary);
             tmPipe = new ToneMapPipeline(device, renderTarget, toneMapTarget, swapChain.IsLinearColorSpace, shaderDirectory);
             pipe = new RenderPipeline(device, swapChain, rtPipe, tmPipe, renderTarget, toneMapTarget);
         };
@@ -105,6 +110,8 @@ class Renderer : IDisposable
         pipe.Dispose();
         tmPipe.Dispose();
         rtPipe.Dispose();
+
+        materialLibrary.Dispose();
 
         foreach (var m in meshAccels)
             m.Dispose();

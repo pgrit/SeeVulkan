@@ -33,6 +33,6 @@ void main()
     payload.weight = vec3(hit.uv, 0.5);
     payload.weight = vec3(abs(dot(hit.normal, -gl_WorldRayDirectionEXT)));
     payload.weight = vec3(hit.materialId * 0.1);
-    payload.weight = vec3(materials[2].BaseColorIdx);
-    payload.weight = texture(textures[1], hit.uv).xyz;
+    payload.weight = vec3(materials[hit.materialId].BaseColorIdx);
+    payload.weight = vec3(texture(textures[materials[hit.materialId].BaseColorIdx], hit.uv).x);
 }

@@ -4,9 +4,10 @@ using MonochromeImage = SimpleImageIO.MonochromeImage;
 
 namespace SeeVulkan;
 
-class MaterialLibrary
+class MaterialLibrary : IDisposable
 {
-    List<Material> materials = [];
+    List<MaterialParameters> materials = [];
+    List<SimpleImageIO.Image> rawTextures = [];
 
     Dictionary<SeeSharp.Shading.Materials.Material, int> known = [];
 
@@ -15,15 +16,20 @@ class MaterialLibrary
         if (known.TryGetValue(material, out int idx))
             return idx;
 
-        Material result = new();
+        MaterialParameters result = new();
 
         if (material is SeeSharp.Shading.Materials.DiffuseMaterial diffuseMtl)
         {
-            result.BaseColor = MapTextureOrColor(diffuseMtl.MaterialParameters.BaseColor);
-            result.Roughness = new(1, 1);
-            result.Roughness[0, 0] = 1.0f;
-            result.Metallic = new(1, 1);
-            result.Metallic[0, 0] = 0.0f;
+            result.BaseColorIdx = AddTexture(MapTextureOrColor(diffuseMtl.MaterialParameters.BaseColor));
+
+            MonochromeImage rough = new(1, 1);
+            rough.Fill(1.0f);
+            result.RoughnessIdx = AddTexture(rough); // TODO could reuse once via caching...
+
+            MonochromeImage metallic = new(1, 1);
+            metallic.Fill(1.0f);
+            result.MetallicIdx = AddTexture(metallic); // TODO could reuse once via caching...
+
             result.SpecularTintStrength = 1;
             result.Anisotropic = 0;
             result.SpecularTransmittance = 0;
@@ -33,10 +39,13 @@ class MaterialLibrary
         }
         else if (material is SeeSharp.Shading.Materials.GenericMaterial genericMtl)
         {
-            result.BaseColor = MapTextureOrColor(genericMtl.MaterialParameters.BaseColor);
-            result.Roughness = MapTextureOrScalar(genericMtl.MaterialParameters.Roughness);
-            result.Metallic = new(1, 1);
-            result.Metallic[0, 0] = genericMtl.MaterialParameters.Metallic;
+            result.BaseColorIdx = AddTexture(MapTextureOrColor(genericMtl.MaterialParameters.BaseColor));
+            result.RoughnessIdx = AddTexture(MapTextureOrScalar(genericMtl.MaterialParameters.Roughness));
+
+            MonochromeImage metallic = new(1, 1);
+            metallic.Fill(genericMtl.MaterialParameters.Metallic);
+            result.MetallicIdx = AddTexture(metallic);
+
             result.SpecularTintStrength = genericMtl.MaterialParameters.SpecularTintStrength;
             result.Anisotropic = genericMtl.MaterialParameters.Anisotropic;
             result.SpecularTransmittance = genericMtl.MaterialParameters.SpecularTransmittance;
@@ -73,10 +82,34 @@ class MaterialLibrary
         return image;
     }
 
+    uint AddTexture(SimpleImageIO.Image texture)
+    {
+        rawTextures.Add(texture);
+        return (uint)rawTextures.Count - 1;
+    }
+
+    public VulkanBuffer MaterialBuffer;
+    public uint NumMaterials => (uint)materials.Count;
+    public uint NumTextures => (uint)Textures.Length;
+    public Texture[] Textures;
+
     public void Prepare(VulkanRayDevice rayDevice)
     {
-        // TODO prepare all materials
+        Textures = new Texture[rawTextures.Count];
+        for (int i = 0; i < rawTextures.Count; ++i)
+            Textures[i] = new(rayDevice, rawTextures[i]);
 
-        // TODO create material buffer on the device
+        MaterialBuffer = VulkanBuffer.Make<MaterialParameters>(rayDevice,
+            BufferUsageFlags.StorageBufferBit,
+            MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+            materials.ToArray()
+        );
+    }
+
+    public void Dispose()
+    {
+        MaterialBuffer.Dispose();
+        foreach (var t in Textures)
+            t.Dispose();
     }
 }

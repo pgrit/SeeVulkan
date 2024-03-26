@@ -14,7 +14,7 @@ window.MakeCornersSquare();
 if (window.VkSurface is null)
     throw new Exception("Windowing platform doesn't support Vulkan.");
 
-var scene = SceneRegistry.LoadScene("HomeOffice").MakeScene();
+var scene = SceneRegistry.LoadScene("RoughGlasses").MakeScene();
 
 MaterialLibrary materialLibrary = new();
 
@@ -27,7 +27,7 @@ camera.UpdateResolution(window.Size.X, window.Size.Y);
 var camToWorld = camera.CameraToWorld;
 var viewToCam = camera.ViewToCamera;
 
-var renderer = new Renderer(window, meshes, camToWorld, viewToCam, ShaderDirectory.MakeRelativeToScript("./Shaders"));
+var renderer = new Renderer(window, meshes, camToWorld, viewToCam, ShaderDirectory.MakeRelativeToScript("./Shaders"), materialLibrary);
 
 var input = window.CreateInput();
 for (int i = 0; i < input.Keyboards.Count; i++)
