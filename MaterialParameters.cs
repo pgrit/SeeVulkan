@@ -1,5 +1,5 @@
-using RgbImage = SimpleImageIO.RgbImage;
-using MonochromeImage = SimpleImageIO.MonochromeImage;
+using SeeSharp.Shading.Emitters;
+using SimpleImageIO;
 
 namespace SeeVulkan;
 
@@ -14,4 +14,62 @@ struct MaterialParameters
     public float IndexOfRefraction;
     public bool Thin;
     public float DiffuseTransmittance;
+}
+
+record struct MeshEmission(Vector3 Radiance)
+{
+}
+
+record struct Emitter(uint MeshIdx, uint TriangleIdx)
+{
+}
+
+class EmitterData : IDisposable
+{
+    public void Dispose()
+    {
+        EmitterList.Dispose();
+    }
+
+    public List<MeshEmission> MeshEmissionData = [];
+    List<Emitter> emitters = [];
+
+    private VulkanBuffer EmitterList;
+
+    public void Convert(SeeSharp.Scene scene)
+    {
+        // Emitter mapping is only constructed if the scene was prepared for ray tracing
+        if (scene.Raytracer == null)
+        {
+            scene.FrameBuffer = new(1, 1, "");
+            scene.Prepare();
+        }
+
+        for (int i = 0; i < scene.Meshes.Count; ++i)
+        {
+            var meshEmitters = scene.GetMeshEmitters(scene.Meshes[i]);
+            if (meshEmitters == null)
+            {
+                MeshEmissionData.Add(new(RgbColor.Black));
+            }
+            else
+            {
+                MeshEmissionData.Add(new((meshEmitters[0] as DiffuseEmitter)?.Radiance ?? RgbColor.Black));
+
+                for (int k = 0; k < meshEmitters.Count; ++k)
+                {
+                    emitters.Add(new((uint)i, (uint)k));
+                }
+            }
+        }
+    }
+
+    public void Prepare(VulkanRayDevice rayDevice)
+    {
+        EmitterList = VulkanBuffer.Make<Emitter>(rayDevice,
+            BufferUsageFlags.StorageBufferBit,
+            MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+            emitters.ToArray()
+        );
+    }
 }

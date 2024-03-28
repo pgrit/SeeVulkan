@@ -249,15 +249,22 @@ unsafe class VulkanRayDevice : IDisposable
         {
             SType = StructureType.PhysicalDeviceVulkan13Features,
             PNext = &enabledAccelerationStructureFeatures,
-            Maintenance4 = true
+            Maintenance4 = true,
+        };
+
+        PhysicalDeviceDescriptorIndexingFeatures descriptorIndexingFeatures = new()
+        {
+            SType = StructureType.PhysicalDeviceDescriptorIndexingFeatures,
+            PNext = &vulkan13Features,
+            RuntimeDescriptorArray = true,
         };
 
         PhysicalDeviceFeatures2 physicalDeviceFeatures2 = new()
         {
             SType = StructureType.PhysicalDeviceFeatures2,
-            PNext = &vulkan13Features,
+            PNext = &descriptorIndexingFeatures,
             Features = new PhysicalDeviceFeatures() {
-                ShaderInt64 = true
+                ShaderInt64 = true,
             }
         };
 

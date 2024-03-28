@@ -16,6 +16,8 @@ class Renderer : IDisposable
 
     MeshAccel[] meshAccels;
     MaterialLibrary materialLibrary;
+    private EmitterData emitters;
+
 
     public void SendToTev()
     {
@@ -36,9 +38,18 @@ class Renderer : IDisposable
         img.WriteToFile(filename);
     }
 
-    public Renderer(IWindow window, ReadOnlySpan<Mesh> meshes, Matrix4x4 camToWorld, Matrix4x4 viewToCam, ShaderDirectory shaderDirectory, MaterialLibrary materialLibrary)
+    public delegate (Matrix4x4 CamToWorld, Matrix4x4 ViewToCam) CameraComputeCallback(int width, int height);
+
+    uint frameIdx = 0;
+    public bool Throttle = false;
+
+    public void Restart() => frameIdx = 0;
+
+    public Renderer(IWindow window, ReadOnlySpan<Mesh> meshes, CameraComputeCallback computeCamera,
+        ShaderDirectory shaderDirectory, MaterialLibrary materialLibrary, EmitterData emitters)
     {
         this.materialLibrary = materialLibrary;
+        this.emitters = emitters;
 
         device = new VulkanRayDevice(window);
         swapChain = new SwapChain(device);
@@ -53,8 +64,11 @@ class Renderer : IDisposable
         topLevelAccel = new TopLevelAccel(device, meshAccels);
 
         materialLibrary.Prepare(device);
+        emitters.Prepare(device);
 
-        rtPipe = new RayTracingPipeline(device, topLevelAccel, renderTarget.ImageView, camToWorld, viewToCam, shaderDirectory, meshAccels, materialLibrary);
+        var (camToWorld, viewToCam) = computeCamera(window.Size.X, window.Size.Y);
+
+        rtPipe = new RayTracingPipeline(device, topLevelAccel, renderTarget.ImageView, camToWorld, viewToCam, shaderDirectory, meshAccels, materialLibrary, emitters);
         tmPipe = new ToneMapPipeline(device, renderTarget, toneMapTarget, swapChain.IsLinearColorSpace, shaderDirectory);
         pipe = new RenderPipeline(device, swapChain, rtPipe, tmPipe, renderTarget, toneMapTarget);
 
@@ -69,12 +83,18 @@ class Renderer : IDisposable
             tmPipe.Dispose();
             pipe.Dispose();
             // TODO update camera parameters based on new resolution - callback instead of direct matrix transfer?
-            rtPipe = new RayTracingPipeline(device, topLevelAccel, renderTarget.ImageView, camToWorld, viewToCam, shaderDirectory, meshAccels, materialLibrary);
+            rtPipe = new RayTracingPipeline(device, topLevelAccel, renderTarget.ImageView, camToWorld, viewToCam, shaderDirectory, meshAccels, materialLibrary, emitters);
             tmPipe = new ToneMapPipeline(device, renderTarget, toneMapTarget, swapChain.IsLinearColorSpace, shaderDirectory);
             pipe = new RenderPipeline(device, swapChain, rtPipe, tmPipe, renderTarget, toneMapTarget);
         };
 
-        window.FramebufferResize += newSize => swapChain.NotifyResize();
+        window.FramebufferResize += newSize =>
+        {
+            swapChain.NotifyResize();
+            // TODO should probably be the other way around, renderer being told what to do not asking for update...
+            (camToWorld, viewToCam) = computeCamera(window.Size.X, window.Size.Y);
+            frameIdx = 0;
+        };
 
         double fpsInterval = 1.0;
         double timeToFpsUpdate = fpsInterval;
@@ -84,6 +104,10 @@ class Renderer : IDisposable
 
         window.Render += elapsed =>
         {
+            // Throttle the renderer so we don't waste energy while debugging :)
+            if (Throttle) System.Threading.Thread.Sleep(100);
+
+            rtPipe.UpdateUniforms(camToWorld, viewToCam, frameIdx++);
             swapChain.DrawFrame(elapsed);
 
             timeToFpsUpdate -= elapsed;
@@ -91,14 +115,17 @@ class Renderer : IDisposable
             {
                 double fps = 1.0 / (elapsed / 1.0);
                 timeToFpsUpdate = fpsInterval;
-                window.Title = $"SeeVulkan - {fps:.} fps";
+                window.Title = $"SeeVulkan - {fps:.} fps" + (Throttle ? " (throttled)" : "");
             }
 
             timeToShaderScan -= elapsed;
             if (timeToShaderScan < 0.0)
             {
                 if (shaderDirectory.ScanForUpdates())
+                {
                     swapChain.NotifyResize(); // TODO we don't need to realloc everything... but this is safe and easy
+                    frameIdx = 0;
+                }
             }
         };
     }
@@ -111,6 +138,7 @@ class Renderer : IDisposable
         tmPipe.Dispose();
         rtPipe.Dispose();
 
+        emitters.Dispose();
         materialLibrary.Dispose();
 
         foreach (var m in meshAccels)

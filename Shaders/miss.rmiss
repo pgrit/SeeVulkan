@@ -8,5 +8,5 @@ layout(location = 0) rayPayloadInEXT RayPayload payload;
 
 void main()
 {
-    payload.weight = vec3(0.1, 0.3, 0.5);
+    payload.weight = vec3(0.0);
 }

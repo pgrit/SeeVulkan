@@ -199,9 +199,16 @@ unsafe class SwapChain : VulkanComponent, IDisposable
     {
         vk.WaitForFences(rayDevice.Device, 1, inFlightFences[currentFrame], true, ulong.MaxValue);
 
+        if (resized) // First check for resize to avoid unnecessary validation error by AcquireNextImage below
+        {
+            Recreate();
+            resized = false;
+            return;
+        }
+
         uint imageIndex = 0;
         var result = khrSwapChain.AcquireNextImage(rayDevice.Device, swapChain, ulong.MaxValue, imageAvailableSemaphores[currentFrame], default, ref imageIndex);
-        if (result == Result.ErrorOutOfDateKhr || result == Result.SuboptimalKhr || resized)
+        if (result == Result.ErrorOutOfDateKhr || result == Result.SuboptimalKhr)
         {
             Recreate();
             resized = false;

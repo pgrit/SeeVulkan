@@ -7,34 +7,116 @@
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
 #include "types.glsl"
+#include "rng.glsl"
 
 layout(binding = 0, set = 0) uniform accelerationStructureEXT topLevelAS;
 layout(binding = 1, set = 0, rgba32f) uniform image2D image;
 layout(binding = 2, set = 0) uniform UniformBufferObject {
     mat4 camToWorld;
     mat4 viewToCam;
-} ubo;
+    uint frameIdx;
+};
+layout(binding = 3, set = 0) readonly buffer Materials { Material materials[]; };
+layout(binding = 4, set = 0) uniform sampler2D textures[];
 
 layout(location = 0) rayPayloadEXT RayPayload payload;
 
-void main()
-{
-    const vec2 pixelCenter = vec2(gl_LaunchIDEXT.xy) + vec2(0.5);
+const int MAX_DEPTH = 10;
+
+vec3 sphericalToCartesian(float sintheta, float costheta, float phi) {
+    return vec3(
+        sintheta * cos(phi),
+        sintheta * sin(phi),
+        costheta
+    );
+}
+
+vec3 sampleCosHemisphere(vec2 primary, out float pdf) {
+    vec3 localDir = sphericalToCartesian(
+        sqrt(1 - primary.y),
+        sqrt(primary.y),
+        2.0 * PI * primary.x
+    );
+    pdf = localDir.z / PI;
+    return localDir;
+}
+
+void computeBasisVectors(vec3 normal, out mat3 shadingToWorld, out mat3 worldToShading) {
+    vec3 tangent;
+    if (abs(normal.x) > abs(normal.y)) {
+        float denom = sqrt(normal.x * normal.x + normal.z * normal.z);
+        tangent = vec3(-normal.z, 0.0, normal.x) / denom;
+    } else {
+        float denom = sqrt(normal.y * normal.y + normal.z * normal.z);
+        tangent = vec3(0.0, normal.z, -normal.y) / denom;
+    }
+    vec3 binormal = cross(normal, tangent);
+    shadingToWorld = mat3(tangent, binormal, normal);
+    worldToShading = transpose(shadingToWorld);
+}
+
+vec3 offsetPoint(HitData from, vec3 dir) {
+    return from.pos + sign(dot(dir, from.normal)) * from.errorOffset * from.normal;
+}
+
+void main() {
+    // Seed the RNG
+    uint rngSeed = 1337;
+    uint pixelIdx = gl_LaunchIDEXT.x + gl_LaunchIDEXT.y * gl_LaunchSizeEXT.x;
+    payload.rngState = hashSeed(1337, pixelIdx, frameIdx);
+    payload.weight = vec3(frameIdx);
+
+    // Sample the camera ray
+    const vec2 pixelCenter = vec2(gl_LaunchIDEXT.xy) + rngNextVec2(payload.rngState);
     const vec2 view = vec2(
         pixelCenter.x / gl_LaunchSizeEXT.x * 2.0 - 1.0,
         1.0 - pixelCenter.y / gl_LaunchSizeEXT.y * 2.0
     );
-    vec4 localDir = ubo.viewToCam * vec4(view.xy, 0.0, 1.0);
-    vec4 worldDir = ubo.camToWorld * vec4(localDir.xyz, 0.0);
-    vec4 direction = vec4(normalize(worldDir.xyz), 0);
-    vec4 origin = ubo.camToWorld * vec4(0, 0, 0, 1);
-
+    vec4 localDir = viewToCam * vec4(view.xy, 0.0, 1.0);
+    vec4 worldDir = camToWorld * vec4(localDir.xyz, 0.0);
+    vec3 direction = normalize(worldDir.xyz);
+    vec3 origin = (camToWorld * vec4(0, 0, 0, 1)).xyz;
     float tmin = 0.0;
-    float tmax = 10000.0;
 
-    payload.weight = vec3(0);
+    vec3 result = vec3(0);
+    vec3 prefixWeight = vec3(1.0);
+    for (int depth = 1; depth <= MAX_DEPTH; ++depth) { // depth = number of rays traced so far
+        payload.hit.dist = -1;
+        traceRayEXT(topLevelAS, gl_RayFlagsOpaqueEXT, 0xff, 0, 0, 0, origin, tmin, direction, 1e+38, 0);
 
-    traceRayEXT(topLevelAS, gl_RayFlagsOpaqueEXT, 0xff, 0, 0, 0, origin.xyz, tmin, direction.xyz, tmax, 0);
+        // Handle background hit / scene left
+        if (payload.hit.dist < 0) {
+            result += prefixWeight * vec3(0.0); // TODO background radiance + MIS
+            break;
+        }
 
-    imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(payload.weight, 1.0));
+        mat3 shadingToWorld, worldToShading;
+        computeBasisVectors(payload.hit.normal, shadingToWorld, worldToShading);
+        vec3 outDir = worldToShading * (-direction);
+
+        // Handle emitter hits
+        if (!isBlack(payload.hit.emission.radiance) && outDir.z > 0) { // Emitters are one-sided
+            result += prefixWeight * payload.hit.emission.radiance;
+            // TODO MIS
+        }
+
+        // Perform next event estimation
+
+        // Sample the next direction
+        float pdf;
+        vec3 inDir = sampleCosHemisphere(rngNextVec2(payload.rngState), pdf);
+        if (outDir.z < 0) inDir.z = -inDir.z;
+        direction = shadingToWorld * inDir;
+
+        Material material = materials[payload.hit.materialIdx];
+        vec3 baseClr = texture(textures[material.BaseColorIdx], payload.hit.uv).xyz;
+        prefixWeight *= baseClr; // cos / pi cancels with the sampling PDF
+
+        origin = offsetPoint(payload.hit, direction);
+        tmin = payload.hit.errorOffset;
+    }
+
+    vec4 oldVal = imageLoad(image, ivec2(gl_LaunchIDEXT.xy));
+    vec3 newVal = oldVal.xyz * frameIdx / (frameIdx + 1.0) + result.xyz / (frameIdx + 1.0);
+    imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(newVal, 1.0));
 }

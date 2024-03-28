@@ -1,3 +1,4 @@
+using ImGuiNET;
 using SimpleImageIO;
 
 namespace SeeVulkan;
@@ -21,7 +22,8 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
     private VulkanBuffer perMeshDataBuffer;
 
     public RayTracingPipeline(VulkanRayDevice rayDevice, TopLevelAccel topLevelAccel, ImageView storageImageView,
-        Matrix4x4 camToWorld, Matrix4x4 viewToCam, ShaderDirectory shaderDirectory, MeshAccel[] meshAccels, MaterialLibrary materials)
+        Matrix4x4 camToWorld, Matrix4x4 viewToCam, ShaderDirectory shaderDirectory, MeshAccel[] meshAccels,
+        MaterialLibrary materials, EmitterData emitters)
     : base(rayDevice)
     {
         if (!vk.TryGetDeviceExtension(rayDevice.Instance, device, out rayPipe))
@@ -52,7 +54,7 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
                 DescriptorCount = 1,
                 StageFlags = ShaderStageFlags.RaygenBitKhr
             },
-            new() // Camera matrices
+            new() // Camera matrices and frame index
             {
                 Binding = 2,
                 DescriptorType = DescriptorType.UniformBuffer,
@@ -64,14 +66,14 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
                 Binding = 3,
                 DescriptorType = DescriptorType.StorageBuffer,
                 DescriptorCount = 1,
-                StageFlags = ShaderStageFlags.ClosestHitBitKhr | ShaderStageFlags.AnyHitBitKhr
+                StageFlags = ShaderStageFlags.ClosestHitBitKhr | ShaderStageFlags.AnyHitBitKhr | ShaderStageFlags.RaygenBitKhr
             },
             new() // Texture buffer
             {
                 Binding = 4,
                 DescriptorType = DescriptorType.CombinedImageSampler,
                 DescriptorCount = materials.NumTextures,
-                StageFlags = ShaderStageFlags.ClosestHitBitKhr | ShaderStageFlags.AnyHitBitKhr,
+                StageFlags = ShaderStageFlags.ClosestHitBitKhr | ShaderStageFlags.AnyHitBitKhr | ShaderStageFlags.RaygenBitKhr,
                 PImmutableSamplers = null
             }
         };
@@ -86,20 +88,21 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
 
         // Buffer that holds all device addresses of all vertex and index buffers. It's address in turn is
         // given to the shader as a push constant
-        PerMeshData[] addrs = new PerMeshData[meshAccels.Length];
-        for (int k = 0; k < addrs.Length; ++k)
+        PerMeshData[] perMeshData = new PerMeshData[meshAccels.Length];
+        for (int k = 0; k < perMeshData.Length; ++k)
         {
-            addrs[k] = new()
+            perMeshData[k] = new()
             {
                 VertexBufferAddress = meshAccels[k].VertexBuffer.DeviceAddress,
                 IndexBufferAddress = meshAccels[k].IndexBuffer.DeviceAddress,
                 MaterialId = (uint)meshAccels[k].Mesh.MaterialId,
+                Emission = emitters.MeshEmissionData[k]
             };
         }
         perMeshDataBuffer = VulkanBuffer.Make<PerMeshData>(rayDevice,
             BufferUsageFlags.ShaderDeviceAddressBit,
             MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
-            addrs
+            perMeshData
         );
 
         PushConstantRange pushConstantRange = new()
@@ -225,7 +228,7 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
                 Type = DescriptorType.StorageImage,
                 DescriptorCount = 1
             },
-            new() { // Camera matrices
+            new() { // Camera matrices and frame index
                 Type = DescriptorType.UniformBuffer,
                 DescriptorCount = 1
             },
@@ -292,8 +295,8 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
             PImageInfo = &storageImageDescriptor
         };
 
-        // Put the camera matrices into a uniform buffer
-        Span<float> matrixData = stackalloc float[4*4*2];
+        // Put the camera matrices into a uniform buffer. Add one float (same size as uint) for the frame index
+        Span<float> matrixData = stackalloc float[4*4*2 + 1];
         i = 0;
         for (int row = 0; row < 4; ++row)
             for (int col = 0; col < 4; ++col)
@@ -380,10 +383,30 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
         }
     }
 
+    public void UpdateUniforms(Matrix4x4 camToWorld, Matrix4x4 viewToCam, uint frameIdx)
+    {
+        void* pData = null;
+        vk.MapMemory(device, uniformBuffer.Memory, 0, 4 * 4 * 2 * sizeof(float) + sizeof(uint), 0, ref pData);
+
+        int i = 0;
+        for (int row = 0; row < 4; ++row)
+            for (int col = 0; col < 4; ++col)
+                ((float*)pData)[i++] = camToWorld[row, col];
+        for (int row = 0; row < 4; ++row)
+            for (int col = 0; col < 4; ++col)
+                ((float*)pData)[i++] = viewToCam[row, col];
+
+        // This works because uint and float are both 32 bit
+        ((uint*)pData)[i++] = frameIdx;
+
+        vk.UnmapMemory(device, uniformBuffer.Memory);
+    }
+
     struct PerMeshData {
         public ulong VertexBufferAddress;
         public ulong IndexBufferAddress;
         public uint MaterialId;
+        public MeshEmission Emission;
     }
 
     public void MakeCommands(CommandBuffer commandBuffer, uint width, uint height)
