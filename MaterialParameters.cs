@@ -34,7 +34,9 @@ class EmitterData : IDisposable
     public List<MeshEmission> MeshEmissionData = [];
     List<Emitter> emitters = [];
 
-    private VulkanBuffer EmitterList;
+    public VulkanBuffer EmitterList;
+
+    public uint NumEmitters => (uint)emitters.Count;
 
     public void Convert(SeeSharp.Scene scene)
     {
@@ -67,7 +69,7 @@ class EmitterData : IDisposable
     public void Prepare(VulkanRayDevice rayDevice)
     {
         EmitterList = VulkanBuffer.Make<Emitter>(rayDevice,
-            BufferUsageFlags.StorageBufferBit,
+            BufferUsageFlags.ShaderDeviceAddressBit,
             MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
             emitters.ToArray()
         );

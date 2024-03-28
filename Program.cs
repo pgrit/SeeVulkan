@@ -14,7 +14,7 @@ window.MakeCornersSquare();
 if (window.VkSurface is null)
     throw new Exception("Windowing platform doesn't support Vulkan.");
 
-var scene = SceneRegistry.LoadScene("HomeOffice").MakeScene();
+var scene = SceneRegistry.LoadScene("VeachMis").MakeScene();
 
 MaterialLibrary materialLibrary = new();
 

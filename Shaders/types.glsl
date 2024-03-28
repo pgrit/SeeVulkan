@@ -21,6 +21,8 @@ struct HitData {
     vec2 uv;
     float errorOffset;
     uint materialIdx;
+    uint meshIdx;
+    uint triangleIdx;
     MeshEmission emission;
 };
 
@@ -28,6 +30,7 @@ struct RayPayload {
     uint rngState;
     vec3 weight;
     HitData hit;
+    bool occluded;
 };
 
 const float PI = 3.1415926;

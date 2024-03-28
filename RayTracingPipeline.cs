@@ -21,11 +21,15 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
     private VulkanBuffer uniformBuffer;
     private VulkanBuffer perMeshDataBuffer;
 
+    EmitterData emitters;
+
     public RayTracingPipeline(VulkanRayDevice rayDevice, TopLevelAccel topLevelAccel, ImageView storageImageView,
         Matrix4x4 camToWorld, Matrix4x4 viewToCam, ShaderDirectory shaderDirectory, MeshAccel[] meshAccels,
         MaterialLibrary materials, EmitterData emitters)
     : base(rayDevice)
     {
+        this.emitters = emitters;
+
         if (!vk.TryGetDeviceExtension(rayDevice.Instance, device, out rayPipe))
             throw new NotSupportedException($"{KhrRayTracingPipeline.ExtensionName} extension not found.");
 
@@ -107,7 +111,7 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
 
         PushConstantRange pushConstantRange = new()
         {
-            StageFlags = ShaderStageFlags.ClosestHitBitKhr | ShaderStageFlags.AnyHitBitKhr,
+            StageFlags = ShaderStageFlags.ClosestHitBitKhr | ShaderStageFlags.AnyHitBitKhr | ShaderStageFlags.RaygenBitKhr,
             Offset = 0,
             Size = sizeof(ulong) // The device address of the per-mesh data buffer
         };
@@ -295,17 +299,9 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
             PImageInfo = &storageImageDescriptor
         };
 
-        // Put the camera matrices into a uniform buffer. Add one float (same size as uint) for the frame index
-        Span<float> matrixData = stackalloc float[4*4*2 + 1];
-        i = 0;
-        for (int row = 0; row < 4; ++row)
-            for (int col = 0; col < 4; ++col)
-                matrixData[(int)i++] = camToWorld[row, col];
-        for (int row = 0; row < 4; ++row)
-            for (int col = 0; col < 4; ++col)
-                matrixData[(int)i++] = viewToCam[row, col];
-
-        uniformBuffer = VulkanBuffer.Make<float>(rayDevice,
+        // Allocate memory for the uniforms (matrices and other info)
+        ReadOnlySpan<byte> matrixData = stackalloc byte[sizeof(UniformData)];
+        uniformBuffer = VulkanBuffer.Make(rayDevice,
             BufferUsageFlags.UniformBufferBit,
             MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
             matrixData
@@ -315,7 +311,7 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
         {
             Buffer = uniformBuffer.Buffer,
             Offset = 0,
-            Range = (ulong)matrixData.Length * sizeof(float)
+            Range = (ulong)sizeof(UniformData)
         };
 
         WriteDescriptorSet uniformBufferWrite = new()
@@ -383,21 +379,31 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
         }
     }
 
+    struct UniformData
+    {
+        public fixed float CameraMatrices[4*4*2];
+        public uint FrameIdx;
+        public ulong EmitterBufferAddress;
+        public uint NumEmitter;
+    }
+
     public void UpdateUniforms(Matrix4x4 camToWorld, Matrix4x4 viewToCam, uint frameIdx)
     {
-        void* pData = null;
-        vk.MapMemory(device, uniformBuffer.Memory, 0, 4 * 4 * 2 * sizeof(float) + sizeof(uint), 0, ref pData);
+        void* ptr = null;
+        vk.MapMemory(device, uniformBuffer.Memory, 0, (ulong)sizeof(UniformData), 0, ref ptr);
+        var pData = (UniformData*)ptr;
 
         int i = 0;
         for (int row = 0; row < 4; ++row)
             for (int col = 0; col < 4; ++col)
-                ((float*)pData)[i++] = camToWorld[row, col];
+                pData->CameraMatrices[i++] = camToWorld[row, col];
         for (int row = 0; row < 4; ++row)
             for (int col = 0; col < 4; ++col)
-                ((float*)pData)[i++] = viewToCam[row, col];
+                pData->CameraMatrices[i++] = viewToCam[row, col];
 
-        // This works because uint and float are both 32 bit
-        ((uint*)pData)[i++] = frameIdx;
+        pData->FrameIdx = frameIdx;
+        pData->EmitterBufferAddress = emitters.EmitterList.DeviceAddress;
+        pData->NumEmitter = emitters.NumEmitters;
 
         vk.UnmapMemory(device, uniformBuffer.Memory);
     }
@@ -440,7 +446,7 @@ unsafe class RayTracingPipeline : VulkanComponent, IDisposable
 
         ulong addr = perMeshDataBuffer.DeviceAddress;
         vk.CmdPushConstants(commandBuffer, pipelineLayout,
-            ShaderStageFlags.ClosestHitBitKhr | ShaderStageFlags.AnyHitBitKhr,
+            ShaderStageFlags.ClosestHitBitKhr | ShaderStageFlags.AnyHitBitKhr | ShaderStageFlags.RaygenBitKhr,
             0, sizeof(ulong), &addr);
 
         rayPipe.CmdTraceRays(

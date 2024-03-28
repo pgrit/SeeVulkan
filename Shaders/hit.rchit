@@ -8,49 +8,17 @@
 
 #include "types.glsl"
 #include "rng.glsl"
+#include "meshdata.glsl"
 
 layout(location = 0) rayPayloadInEXT RayPayload payload;
 
-layout(binding = 3, set = 0) readonly buffer Materials { Material materials[]; };
-layout(binding = 4, set = 0) uniform sampler2D textures[];
-
 hitAttributeEXT vec2 attribs;
 
-layout(push_constant) uniform PerMeshDataBufferAddress {
-    uint64_t perMeshDataBufferAddress;
-};
-
-struct PerMeshData {
-    uint64_t vertexBufferAddress;
-    uint64_t indexBufferAddress;
-    uint materialId;
-    MeshEmission emission;
-};
-
-layout(buffer_reference, scalar) buffer PerMeshDataBuffer {
-    PerMeshData data[];
-};
-
-struct Vertex {
-    vec3 pos;
-    vec3 normal;
-    vec2 uv;
-};
-
-layout(buffer_reference, scalar) buffer Vertices {
-    Vertex v[];
-};
-
-layout(buffer_reference, scalar) buffer Indices {
-    uint i[];
-};
-
-HitData computeHitData() {
+void main()
+{
     const int primId = gl_PrimitiveID;
-    const int meshId = gl_InstanceID;
 
-    PerMeshDataBuffer perMeshDataBuffer = PerMeshDataBuffer(perMeshDataBufferAddress);
-    PerMeshData meshData = perMeshDataBuffer.data[meshId];
+    PerMeshData meshData = getMeshData(gl_InstanceID);
 
     Vertices verts = Vertices(meshData.vertexBufferAddress);
     Indices indices = Indices(meshData.indexBufferAddress);
@@ -76,10 +44,6 @@ HitData computeHitData() {
     // (math borrowed from the Embree example renderer)
     float errorOffset = max(max(abs(hitp.x), abs(hitp.y)), max(abs(hitp.z), gl_HitTEXT)) * 32.0 * 1.19209e-07;
 
-    return HitData(hitp, gl_HitTEXT, normal, uv, errorOffset, meshData.materialId, meshData.emission);
-}
-
-void main()
-{
-    payload.hit = computeHitData();
+    payload.hit = HitData(hitp, gl_HitTEXT, normal, uv, errorOffset, meshData.materialId, gl_InstanceID, primId,
+        meshData.emission);
 }

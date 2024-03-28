@@ -8,6 +8,7 @@
 
 #include "types.glsl"
 #include "rng.glsl"
+#include "meshdata.glsl"
 
 layout(binding = 0, set = 0) uniform accelerationStructureEXT topLevelAS;
 layout(binding = 1, set = 0, rgba32f) uniform image2D image;
@@ -15,13 +16,24 @@ layout(binding = 2, set = 0) uniform UniformBufferObject {
     mat4 camToWorld;
     mat4 viewToCam;
     uint frameIdx;
+    uint64_t emitterBufferAddress;
+    uint numEmitter;
 };
 layout(binding = 3, set = 0) readonly buffer Materials { Material materials[]; };
 layout(binding = 4, set = 0) uniform sampler2D textures[];
 
 layout(location = 0) rayPayloadEXT RayPayload payload;
 
-const int MAX_DEPTH = 10;
+struct Emitter {
+    uint meshIdx;
+    uint triangleIdx;
+};
+
+layout(buffer_reference, scalar) buffer EmitterBuffer {
+    Emitter data[];
+};
+
+const int MAX_DEPTH = 2;
 
 vec3 sphericalToCartesian(float sintheta, float costheta, float phi) {
     return vec3(
@@ -59,7 +71,26 @@ vec3 offsetPoint(HitData from, vec3 dir) {
     return from.pos + sign(dot(dir, from.normal)) * from.errorOffset * from.normal;
 }
 
+vec3 sampleTriangle(Triangle triangle, vec2 primary, out float errorOffset, out vec3 normal) {
+    float sqrtRnd1 = sqrt(primary.x);
+    float u = 1.0 - sqrtRnd1;
+    float v = primary.y * sqrtRnd1;
+
+    vec3 errorDiagonal = abs((1 - u - v) * triangle.v1.pos + abs(u * triangle.v2.pos) + abs(v * triangle.v3.pos));
+    errorOffset = length(errorDiagonal) * 32.0 * 1.19209e-07;
+
+    normal = (1.0 - u - v) * triangle.v1.normal + u * triangle.v2.normal + v * triangle.v3.normal;
+
+    return (1.0 - u - v) * triangle.v1.pos + u * triangle.v2.pos + v * triangle.v3.pos;
+}
+
+float lengthSqr(vec3 v) {
+    return dot(v, v);
+}
+
 void main() {
+    EmitterBuffer emitterBuffer = EmitterBuffer(emitterBufferAddress);
+
     // Seed the RNG
     uint rngSeed = 1337;
     uint pixelIdx = gl_LaunchIDEXT.x + gl_LaunchIDEXT.y * gl_LaunchSizeEXT.x;
@@ -80,6 +111,7 @@ void main() {
 
     vec3 result = vec3(0);
     vec3 prefixWeight = vec3(1.0);
+    float lastPdf = 1.0;
     for (int depth = 1; depth <= MAX_DEPTH; ++depth) { // depth = number of rays traced so far
         payload.hit.dist = -1;
         traceRayEXT(topLevelAS, gl_RayFlagsOpaqueEXT, 0xff, 0, 0, 0, origin, tmin, direction, 1e+38, 0);
@@ -96,20 +128,74 @@ void main() {
 
         // Handle emitter hits
         if (!isBlack(payload.hit.emission.radiance) && outDir.z > 0) { // Emitters are one-sided
-            result += prefixWeight * payload.hit.emission.radiance;
+            Triangle emitterTriangle = getTriangle(payload.hit.meshIdx, payload.hit.triangleIdx);
+
+            float misWeight = 1;
+            if (depth > 1) {
+                float cosLight = abs(dot(emitterTriangle.geomNormal, outDir));
+                float d2 = payload.hit.dist * payload.hit.dist;
+                float invNextEventPdf = emitterTriangle.area * numEmitter * cosLight / d2;
+                float pdfRatio = 1.0 / (lastPdf * invNextEventPdf);
+                misWeight = 1 / (1 + pdfRatio * pdfRatio);
+            }
+
+            result += prefixWeight * misWeight * payload.hit.emission.radiance;
             // TODO MIS
         }
 
+        Material material = materials[payload.hit.materialIdx];
+        vec3 baseClr = texture(textures[material.BaseColorIdx], payload.hit.uv).xyz;
+
         // Perform next event estimation
+        uint emitterIdx = rngNextInt(payload.rngState, numEmitter);
+        Emitter emitter = emitterBuffer.data[emitterIdx];
+        Triangle emitterTriangle = getTriangle(emitter.meshIdx, emitter.triangleIdx);
+        vec3 radiance = getMeshData(emitter.meshIdx).emission.radiance;
+
+        // Sample point on the triangle
+        float shadowErrorOffset;
+        vec3 emitterShadingNormal;
+        vec3 lightPoint = sampleTriangle(emitterTriangle, rngNextVec2(payload.rngState), shadowErrorOffset, emitterShadingNormal);
+
+        vec3 dirToLight = lightPoint - payload.hit.pos;
+
+        if (dot(emitterShadingNormal, -dirToLight) > 0) { // Check that we are on the right side of the light
+            float d2 = lengthSqr(dirToLight);
+            float d = sqrt(d2);
+            dirToLight /= d;
+
+            payload.occluded = true;
+            traceRayEXT(topLevelAS,
+                gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
+                0xff, 0, 0, 0,
+                offsetPoint(payload.hit, dirToLight), 0.0,
+                dirToLight, d - payload.hit.errorOffset * 2,
+                0
+            );
+
+            if (!payload.occluded) {
+                vec3 inDir = worldToShading * dirToLight;
+
+                vec3 bsdfTimesCos = baseClr / PI * abs(inDir.z);
+                if (inDir.z * outDir.z < 0.0)  // Check that we are in the correct hemisphere
+                    bsdfTimesCos = vec3(0);
+
+                float cosLight = abs(dot(emitterTriangle.geomNormal, -dirToLight));
+                float invNextEventPdf = emitterTriangle.area * numEmitter * cosLight / d2;
+
+                float pdfBsdf = abs(inDir.z) / PI;
+                float pdfRatio = pdfBsdf * invNextEventPdf;
+                float misWeight = 1.0 / (1.0 + pdfRatio * pdfRatio);
+
+                result += prefixWeight * misWeight * bsdfTimesCos * invNextEventPdf * radiance;
+            }
+        }
 
         // Sample the next direction
-        float pdf;
-        vec3 inDir = sampleCosHemisphere(rngNextVec2(payload.rngState), pdf);
+        vec3 inDir = sampleCosHemisphere(rngNextVec2(payload.rngState), lastPdf);
         if (outDir.z < 0) inDir.z = -inDir.z;
         direction = shadingToWorld * inDir;
 
-        Material material = materials[payload.hit.materialIdx];
-        vec3 baseClr = texture(textures[material.BaseColorIdx], payload.hit.uv).xyz;
         prefixWeight *= baseClr; // cos / pi cancels with the sampling PDF
 
         origin = offsetPoint(payload.hit, direction);
