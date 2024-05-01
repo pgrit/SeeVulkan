@@ -1,6 +1,3 @@
-using ImGuiNET;
-using SimpleImageIO;
-
 namespace SeeVulkan;
 
 unsafe class RayTracingPipeline : VulkanComponent, IDisposable

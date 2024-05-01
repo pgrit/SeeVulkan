@@ -7,22 +7,19 @@ unsafe class StorageImage : VulkanComponent, IDisposable
     public Image Image;
     public ImageView ImageView;
 
-    private DeviceMemory memory;
+    uint width, height;
 
-    IWindow window => rayDevice.Window;
+    private DeviceMemory memory;
 
     public SimpleImageIO.Image CopyToHost()
     {
-        int width = window.FramebufferSize.X;
-        int height = window.FramebufferSize.Y;
-
         // Create a new temp image with the right layout, memory type, tiling, etc
         ImageCreateInfo imageCreateCI = new()
         {
             SType = StructureType.ImageCreateInfo,
             ImageType = ImageType.Type2D,
             Format = Format.R32G32B32A32Sfloat,
-            Extent = new((uint)width, (uint)height, 1),
+            Extent = new(width, height, 1),
             ArrayLayers = 1,
             MipLevels = 1,
             InitialLayout = ImageLayout.Undefined,
@@ -90,7 +87,7 @@ unsafe class StorageImage : VulkanComponent, IDisposable
             SrcSubresource = subLayers,
             DstOffset = new(0, 0, 0),
             DstSubresource = subLayers,
-            Extent = new((uint)window.FramebufferSize.X, (uint)window.FramebufferSize.Y, 1)
+            Extent = new(width, height, 1)
         };
 
         vk.CmdCopyImage(cmdBuffer, Image, ImageLayout.TransferSrcOptimal, tmpImage,
@@ -133,7 +130,7 @@ unsafe class StorageImage : VulkanComponent, IDisposable
         vk.MapMemory(device, tmpMemory, 0, VK_WHOLE_SIZE, 0, (void**)&pData);
         pData += subResourceLayout.Offset;
 
-        var outImage = new SimpleImageIO.Image(width, height, 4);
+        var outImage = new SimpleImageIO.Image((int)width, (int)height, 4);
         for (int y = 0; y < height; y++)
         {
             float* row = (float*)pData;
@@ -153,10 +150,12 @@ unsafe class StorageImage : VulkanComponent, IDisposable
         return outImage;
     }
 
-    public StorageImage(VulkanRayDevice rayDevice, Format colorFormat)
+    public StorageImage(VulkanRayDevice rayDevice, Format colorFormat, uint width, uint height)
     : base(rayDevice)
     {
         this.rayDevice = rayDevice;
+        this.width = width;
+        this.height = height;
 
         ImageUsageFlags usage = ImageUsageFlags.TransferSrcBit | ImageUsageFlags.StorageBit;
         MemoryPropertyFlags memFlags = MemoryPropertyFlags.DeviceLocalBit;
@@ -167,8 +166,8 @@ unsafe class StorageImage : VulkanComponent, IDisposable
             ImageType = ImageType.Type2D,
             Format = colorFormat,
             Extent = new() {
-                Width = (uint)window.FramebufferSize.X,
-                Height = (uint)window.FramebufferSize.Y,
+                Width = width,
+                Height = height,
                 Depth = 1
             },
             MipLevels = 1,

@@ -19,7 +19,6 @@ unsafe class VulkanRayDevice : IDisposable
     public PhysicalDeviceMemoryProperties MemoryProperties;
     public Device Device;
     public Queue GraphicsQueue, PresentQueue;
-    public uint GraphicsQueueIdx, PresentQueueIdx;
     public CommandPool CommandPool;
     private ExtDebugUtils debugUtils;
     private DebugUtilsMessengerEXT debugMessenger;
@@ -58,9 +57,11 @@ unsafe class VulkanRayDevice : IDisposable
             ApiVersion = Vk.Version13
         };
 
-        string[] extensions = SilkMarshal.PtrToStringArray(
-            (nint)Window.VkSurface.GetRequiredExtensions(out var windowExtCount), (int)windowExtCount);
-        extensions = extensions.Append(ExtDebugUtils.ExtensionName).ToArray();
+        string[] surfaceExtensions = Window == null ? [] :
+            surfaceExtensions = SilkMarshal.PtrToStringArray(
+                (nint)Window.VkSurface.GetRequiredExtensions(out var windowExtCount), (int)windowExtCount);
+
+        string[] extensions = [.. surfaceExtensions, ExtDebugUtils.ExtensionName];
 
         InstanceCreateInfo createInfo = new()
         {
@@ -122,6 +123,9 @@ unsafe class VulkanRayDevice : IDisposable
 
     void CreateWindowSurface()
     {
+        if (Window == null)
+            return;
+
         if (!vk.TryGetInstanceExtension(Instance, out KhrSurface))
             throw new NotSupportedException($"{KhrSurface.ExtensionName} extension not found.");
 
@@ -176,7 +180,8 @@ unsafe class VulkanRayDevice : IDisposable
         uint? graphicsIdx = null;
         for (uint i = 0; i < queueFamilies.Length; ++i)
         {
-            KhrSurface.GetPhysicalDeviceSurfaceSupport(PhysicalDevice, i, Surface, out var presentSupport);
+            Bool32 presentSupport = false;
+            KhrSurface?.GetPhysicalDeviceSurfaceSupport(PhysicalDevice, i, Surface, out presentSupport);
             if (presentSupport)
                 presentIdx = i;
 
@@ -188,13 +193,16 @@ unsafe class VulkanRayDevice : IDisposable
                 break;
         }
 
-        return (graphicsIdx.Value, presentIdx.Value);
+        return (graphicsIdx.Value, presentIdx.GetValueOrDefault(uint.MaxValue));
     }
 
     void CreateLogicalDevice()
     {
         var (graphicsQueueIdx, presentQueueIdx) = FindQueues();
         uint[] uniqueQueueFamilies = new[] { graphicsQueueIdx, presentQueueIdx }.Distinct().ToArray();
+
+        if (Window == null)
+            uniqueQueueFamilies = [graphicsQueueIdx];
 
         using var mem = GlobalMemory.Allocate(uniqueQueueFamilies.Length * sizeof(DeviceQueueCreateInfo));
         var queueCreateInfos = (DeviceQueueCreateInfo*)Unsafe.AsPointer(ref mem.GetPinnableReference());
@@ -211,10 +219,7 @@ unsafe class VulkanRayDevice : IDisposable
             };
         }
 
-        string[] extensions = [
-            KhrSwapchain.ExtensionName,
-
-            // Extensions for ray tracing
+        string[] rayTraceExtensions = [
             KhrAccelerationStructure.ExtensionName,
             KhrRayTracingPipeline.ExtensionName,
             KhrBufferDeviceAddress.ExtensionName,
@@ -224,6 +229,7 @@ unsafe class VulkanRayDevice : IDisposable
             "VK_KHR_shader_float_controls",
         ];
 
+        string[] extensions = Window == null ? rayTraceExtensions : [.. rayTraceExtensions, KhrSwapchain.ExtensionName];
 
         PhysicalDeviceBufferDeviceAddressFeatures addrFeatures = new()
         {
@@ -291,10 +297,9 @@ unsafe class VulkanRayDevice : IDisposable
         CheckResult(vk.CreateDevice(PhysicalDevice, in createInfo, null, out Device), nameof(vk.CreateDevice));
 
         vk.GetDeviceQueue(Device, graphicsQueueIdx, 0, out GraphicsQueue);
-        vk.GetDeviceQueue(Device, presentQueueIdx, 0, out PresentQueue);
 
-        GraphicsQueueIdx = graphicsQueueIdx;
-        PresentQueueIdx = presentQueueIdx;
+        if (Window != null)
+            vk.GetDeviceQueue(Device, presentQueueIdx, 0, out PresentQueue);
 
         SilkMarshal.Free((nint)createInfo.PpEnabledExtensionNames);
         if (EnableValidationLayers)
@@ -402,7 +407,7 @@ unsafe class VulkanRayDevice : IDisposable
         debugUtils?.DestroyDebugUtilsMessenger(Instance, debugMessenger, null);
 
         vk.DestroyDevice(Device, null);
-        KhrSurface.DestroySurface(Instance, Surface, null);
+        KhrSurface?.DestroySurface(Instance, Surface, null);
         vk.DestroyInstance(Instance, null);
 
         vk.Dispose();

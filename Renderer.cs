@@ -54,8 +54,8 @@ class Renderer : IDisposable
         device = new VulkanRayDevice(window);
         swapChain = new SwapChain(device, enableHDR);
 
-        renderTarget = new StorageImage(device, Format.R32G32B32A32Sfloat);
-        toneMapTarget = new StorageImage(device, swapChain.ImageFormat);
+        renderTarget = new StorageImage(device, Format.R32G32B32A32Sfloat, (uint)window.FramebufferSize.X, (uint)window.FramebufferSize.Y);
+        toneMapTarget = new StorageImage(device, swapChain.ImageFormat, (uint)window.FramebufferSize.X, (uint)window.FramebufferSize.Y);
 
         meshAccels = new MeshAccel[meshes.Length];
         for (int i = 0; i < meshes.Length; ++i)
@@ -76,8 +76,8 @@ class Renderer : IDisposable
         {
             renderTarget.Dispose();
             toneMapTarget.Dispose();
-            renderTarget = new StorageImage(device, Format.R32G32B32A32Sfloat);
-            toneMapTarget = new StorageImage(device, swapChain.ImageFormat);
+            renderTarget = new StorageImage(device, Format.R32G32B32A32Sfloat, (uint)window.FramebufferSize.X, (uint)window.FramebufferSize.Y);
+            toneMapTarget = new StorageImage(device, swapChain.ImageFormat, (uint)window.FramebufferSize.X, (uint)window.FramebufferSize.Y);
 
             rtPipe.Dispose();
             tmPipe.Dispose();
@@ -150,6 +150,78 @@ class Renderer : IDisposable
 
         swapChain.Dispose();
         device.Dispose();
+    }
+
+    public static unsafe SimpleImageIO.Image RenderImage(uint width, uint height, uint numSamples,
+        ReadOnlySpan<Mesh> meshes, CameraComputeCallback computeCamera, ShaderDirectory shaderDirectory,
+        MaterialLibrary materialLibrary, EmitterData emitters)
+    {
+        var device = new VulkanRayDevice(null);
+        var vk = device.Vk;
+
+        var renderTarget = new StorageImage(device, Format.R32G32B32A32Sfloat, width, height);
+
+        var meshAccels = new MeshAccel[meshes.Length];
+        for (int i = 0; i < meshes.Length; ++i)
+            meshAccels[i] = new MeshAccel(device, meshes[i]);
+        var topLevelAccel = new TopLevelAccel(device, meshAccels);
+
+        materialLibrary.Prepare(device);
+        emitters.Prepare(device);
+
+        var (camToWorld, viewToCam) = computeCamera((int)width, (int)height);
+
+        var rtPipe = new RayTracingPipeline(device, topLevelAccel, renderTarget.ImageView, camToWorld, viewToCam, shaderDirectory, meshAccels, materialLibrary, emitters);
+
+        FenceCreateInfo fenceInfo = new()
+        {
+            SType = StructureType.FenceCreateInfo,
+            Flags = FenceCreateFlags.SignaledBit,
+        };
+        CheckResult(vk.CreateFence(device.Device, fenceInfo, null, out var fence), nameof(vk.CreateFence));
+
+        CommandBufferAllocateInfo allocInfo = new()
+        {
+            SType = StructureType.CommandBufferAllocateInfo,
+            CommandPool = device.CommandPool,
+            Level = CommandBufferLevel.Primary,
+            CommandBufferCount = 1,
+        };
+        CheckResult(vk.AllocateCommandBuffers(device.Device, allocInfo, out var commandBuffer), nameof(vk.AllocateCommandBuffers));
+
+        CommandBufferBeginInfo beginInfo = new()
+        {
+            SType = StructureType.CommandBufferBeginInfo,
+        };
+        CheckResult(vk.BeginCommandBuffer(commandBuffer, beginInfo), nameof(vk.BeginCommandBuffer));
+
+        rtPipe.MakeCommands(commandBuffer, width, height);
+
+        CheckResult(vk.EndCommandBuffer(commandBuffer), nameof(vk.EndCommandBuffer));
+
+        var timer = Stopwatch.StartNew();
+        for (uint frameIdx = 0; frameIdx < numSamples; ++frameIdx)
+        {
+            rtPipe.UpdateUniforms(camToWorld, viewToCam, frameIdx);
+
+            SubmitInfo submitInfo = new()
+            {
+                SType = StructureType.SubmitInfo,
+                WaitSemaphoreCount = 0,
+                SignalSemaphoreCount = 0,
+                CommandBufferCount = 1,
+                PCommandBuffers = &commandBuffer
+            };
+
+            vk.ResetFences(device.Device, 1, fence);
+            CheckResult(vk.QueueSubmit(device.GraphicsQueue, 1, submitInfo, fence), nameof(vk.QueueSubmit));
+            vk.WaitForFences(device.Device, 1, fence, true, ulong.MaxValue);
+        }
+        Logger.Log($"Done after {timer.ElapsedMilliseconds}ms");
+
+        // TODO clean up properly and in the correct order
+
+        return renderTarget.CopyToHost();
     }
 }
 

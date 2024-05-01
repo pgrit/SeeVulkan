@@ -17,19 +17,8 @@ rootCommand.SetHandler((useHdr) =>
 }, hdrOption);
 rootCommand.Invoke(args);
 
-var options = WindowOptions.DefaultVulkan with {
-    Size = new(800, 600),
-    Title = "SeeVulkan",
-};
 
-var window = Window.Create(options);
-window.Initialize();
-window.MakeCornersSquare();
-
-if (window.VkSurface is null)
-    throw new Exception("Windowing platform doesn't support Vulkan.");
-
-var scene = SceneRegistry.LoadScene("VeachMis").MakeScene();
+var scene = SceneRegistry.LoadScene("RoughGlasses").MakeScene();
 
 MaterialLibrary materialLibrary = new();
 
@@ -46,6 +35,23 @@ emitters.Convert(scene);
     camera.UpdateResolution(width, height);
     return (camera.CameraToWorld, camera.ViewToCamera);
 }
+
+Renderer.RenderImage(1920, 1080, 64,
+    meshes, UpdateCameraMatrices, ShaderDirectory.MakeRelativeToScript("./Shaders"), materialLibrary, emitters)
+.WriteToFile("SeeVulkan.exr");
+
+
+var options = WindowOptions.DefaultVulkan with {
+    Size = new(800, 600),
+    Title = "SeeVulkan",
+};
+
+var window = Window.Create(options);
+window.Initialize();
+window.MakeCornersSquare();
+
+if (window.VkSurface is null)
+    throw new Exception("Windowing platform doesn't support Vulkan.");
 
 var renderer = new Renderer(window, enableHDR, meshes, UpdateCameraMatrices,
     ShaderDirectory.MakeRelativeToScript("./Shaders"),
