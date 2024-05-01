@@ -45,14 +45,14 @@ class Renderer : IDisposable
 
     public void Restart() => frameIdx = 0;
 
-    public Renderer(IWindow window, ReadOnlySpan<Mesh> meshes, CameraComputeCallback computeCamera,
+    public Renderer(IWindow window, bool enableHDR, ReadOnlySpan<Mesh> meshes, CameraComputeCallback computeCamera,
         ShaderDirectory shaderDirectory, MaterialLibrary materialLibrary, EmitterData emitters)
     {
         this.materialLibrary = materialLibrary;
         this.emitters = emitters;
 
         device = new VulkanRayDevice(window);
-        swapChain = new SwapChain(device);
+        swapChain = new SwapChain(device, enableHDR);
 
         renderTarget = new StorageImage(device, Format.R32G32B32A32Sfloat);
         toneMapTarget = new StorageImage(device, swapChain.ImageFormat);

@@ -1,6 +1,21 @@
-﻿using SeeSharp.Cameras;
+﻿using System.CommandLine;
+using SeeSharp.Cameras;
 using SeeSharp.Experiments;
 using SeeVulkan;
+
+bool enableHDR = true;
+
+var rootCommand = new RootCommand("SeeVulkan -- a SeeSharp compatible GPU ray tracer");
+var hdrOption = new Option<bool>(
+    "--hdr",
+    () => true,
+    "Turns HDR display support on or off");
+rootCommand.AddOption(hdrOption);
+rootCommand.SetHandler((useHdr) =>
+{
+    enableHDR = useHdr;
+}, hdrOption);
+rootCommand.Invoke(args);
 
 var options = WindowOptions.DefaultVulkan with {
     Size = new(800, 600),
@@ -32,7 +47,7 @@ emitters.Convert(scene);
     return (camera.CameraToWorld, camera.ViewToCamera);
 }
 
-var renderer = new Renderer(window, meshes, UpdateCameraMatrices,
+var renderer = new Renderer(window, enableHDR, meshes, UpdateCameraMatrices,
     ShaderDirectory.MakeRelativeToScript("./Shaders"),
     materialLibrary, emitters);
 

@@ -12,7 +12,9 @@ unsafe class SwapChain : VulkanComponent, IDisposable
 
     public CommandBuffer[] CommandBuffers;
 
-    void CreateSwapChain()
+    bool enableHDR;
+
+    void CreateSwapChain(bool enableHDR)
     {
         var khrSurface = rayDevice.KhrSurface;
         var physicalDevice = rayDevice.PhysicalDevice;
@@ -37,9 +39,12 @@ unsafe class SwapChain : VulkanComponent, IDisposable
 
         // TODO requesting ExtendedSrgb on Windows automatically turns HDR mode on. This might not be desired
         //      by the user, so we should find a way to only pick these color spaces if HDR is already on
-        (Format Format, ColorSpaceKHR ColorSpace)[] preferredFormats = [
+        (Format Format, ColorSpaceKHR ColorSpace)[] preferredFormats =
+        enableHDR ? [
             (Format.R32G32B32A32Sfloat, ColorSpaceKHR.SpaceExtendedSrgbLinearExt),
             (Format.R16G16B16A16Sfloat, ColorSpaceKHR.SpaceExtendedSrgbLinearExt),
+            (Format.B8G8R8A8Unorm, ColorSpaceKHR.SpaceSrgbNonlinearKhr)
+        ] : [
             (Format.B8G8R8A8Unorm, ColorSpaceKHR.SpaceSrgbNonlinearKhr)
         ];
 
@@ -173,9 +178,10 @@ unsafe class SwapChain : VulkanComponent, IDisposable
         }
     }
 
-    public SwapChain(VulkanRayDevice rayDevice) : base(rayDevice)
+    public SwapChain(VulkanRayDevice rayDevice, bool enableHDR) : base(rayDevice)
     {
-        CreateSwapChain();
+        this.enableHDR = enableHDR;
+        CreateSwapChain(enableHDR);
         CreateImageViews();
         CreateSyncObjects();
     }
@@ -295,7 +301,7 @@ unsafe class SwapChain : VulkanComponent, IDisposable
 
         CleanUp();
 
-        CreateSwapChain();
+        CreateSwapChain(enableHDR);
         CreateImageViews();
 
         imagesInFlight = new Fence[Images.Length];
