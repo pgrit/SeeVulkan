@@ -13,7 +13,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Repositories\SeeSharp\SeeSharp\SeeSharp.csproj" />
+    <ProjectReference Include="..\..\SeeSharp\SeeSharp\SeeSharp.csproj" />
   </ItemGroup>
 
   <ItemGroup>
