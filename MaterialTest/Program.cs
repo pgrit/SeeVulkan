@@ -1,23 +1,25 @@
 ﻿using SeeVulkan;
+using Silk.NET.Input;
+using Silk.NET.Windowing;
 
 SceneRegistry.AddSourceRelativeToScript("./Scenes");
 
 var scene = SceneRegistry.LoadScene("MaterialTester", maxDepth: 2).MakeScene();
-var mtl = scene.Meshes[0].Material as GenericMaterial;
 
-mtl = new(new GenericMaterial.Parameters()
+scene.Meshes[0].Material = new GenericMaterial(new GenericMaterial.Parameters()
 {
-    Roughness = new(0.4f),
+    Roughness = new(0.1f),
     Anisotropic = 0.0f,
-    Metallic = 0.2f,
+    Metallic = 0.0f,
     IndexOfRefraction = 1.45f,
-    SpecularTintStrength = 0.6f,
-    SpecularTransmittance = 0.2f,
-    BaseColor = new(RgbColor.White * 0.9f)
+    SpecularTintStrength = 1.0f,
+    SpecularTransmittance = 0.8f,
+    BaseColor = new(new RgbColor(0.3f, 0.7f, 0.9f))
 });
 
 RgbImage envmap = new(1, 1);
 envmap.Fill(1.0f, 1.0f, 1.0f);
+scene.Background = new EnvironmentMap(envmap);
 
 // Render reference with SeeSharp and send it to tev
 const int width = 640;
@@ -26,10 +28,10 @@ scene.FrameBuffer = new(width, height, "Results/SeeSharp.exr", FrameBuffer.Flags
 scene.Prepare();
 new PathTracer()
 {
-    TotalSpp = 1,
-    NumShadowRays = 1,
+    TotalSpp = 16,
+    NumShadowRays = 0,
     EnableBsdfDI = true,
-    MaxDepth = 10,
+    MaxDepth = 3,
 }.Render(scene);
 scene.FrameBuffer.WriteToFile();
 
@@ -50,8 +52,62 @@ emitters.Convert(scene);
     return (camera.CameraToWorld, camera.ViewToCamera);
 }
 
-Renderer.RenderImage(width, height, 64,
+Renderer.RenderImage(width, height, 16,
     meshes, UpdateCameraMatrices, ShaderDirectory.MakeRelativeToScript("../SeeVulkan/Shaders"), materialLibrary, emitters)
 .WriteToFile("Results/SeeVulkan.exr");
 
 TevIpc.ShowImage("Results/SeeVulkan.exr", new RgbImage("Results/SeeVulkan.exr"));
+
+
+
+
+// // Live view
+// var options = WindowOptions.DefaultVulkan with {
+//     Size = new(800, 600),
+//     Title = "SeeVulkan",
+// };
+
+// var window = Window.Create(options);
+// window.Initialize();
+// window.MakeCornersSquare();
+
+// if (window.VkSurface is null)
+//     throw new Exception("Windowing platform doesn't support Vulkan.");
+
+// var renderer = new Renderer(window, false, meshes, UpdateCameraMatrices,
+//     ShaderDirectory.MakeRelativeToScript("../SeeVulkan/Shaders"),
+//     materialLibrary, emitters);
+
+// renderer.Throttle = true;
+
+// var input = window.CreateInput();
+// for (int i = 0; i < input.Keyboards.Count; i++)
+// {
+//     input.Keyboards[i].KeyDown += (kbd, key, _) => {
+//         if (key == Key.Escape)
+//         {
+//             window.Close();
+//         }
+//         else if (key == Key.T)
+//         {
+//             renderer.SendToTev();
+//         }
+//         else if (key == Key.S)
+//         {
+//             renderer.SaveToFile();
+//         }
+//         else if (key == Key.R)
+//         {
+//             renderer.Restart();
+//         }
+//         else if (key == Key.P)
+//         {
+//             renderer.Throttle = !renderer.Throttle;
+//         }
+//     };
+// }
+
+// window.Run();
+
+// renderer.Dispose();
+// window.Dispose();

@@ -1,4 +1,4 @@
-static class MakeCornersSquareOnWindows11
+public static class MakeCornersSquareOnWindows11
 {
     public static void MakeCornersSquare(this IWindow window)
     {

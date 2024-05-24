@@ -9,6 +9,8 @@
 #include "types.glsl"
 #include "rng.glsl"
 #include "meshdata.glsl"
+layout(binding = 4, set = 0) uniform sampler2D textures[];
+#include "material.glsl"
 
 layout(binding = 0, set = 0) uniform accelerationStructureEXT topLevelAS;
 layout(binding = 1, set = 0, rgba32f) uniform image2D image;
@@ -20,7 +22,7 @@ layout(binding = 2, set = 0) uniform UniformBufferObject {
     uint numEmitter;
 };
 layout(binding = 3, set = 0) readonly buffer Materials { Material materials[]; };
-layout(binding = 4, set = 0) uniform sampler2D textures[];
+
 
 layout(location = 0) rayPayloadEXT RayPayload payload;
 
@@ -33,25 +35,7 @@ layout(buffer_reference, scalar) buffer EmitterBuffer {
     Emitter data[];
 };
 
-const int MAX_DEPTH = 2;
-
-vec3 sphericalToCartesian(float sintheta, float costheta, float phi) {
-    return vec3(
-        sintheta * cos(phi),
-        sintheta * sin(phi),
-        costheta
-    );
-}
-
-vec3 sampleCosHemisphere(vec2 primary, out float pdf) {
-    vec3 localDir = sphericalToCartesian(
-        sqrt(1 - primary.y),
-        sqrt(primary.y),
-        2.0 * PI * primary.x
-    );
-    pdf = localDir.z / PI;
-    return localDir;
-}
+const int MAX_DEPTH = 3;
 
 void computeBasisVectors(vec3 normal, out mat3 shadingToWorld, out mat3 worldToShading) {
     vec3 tangent;
@@ -118,7 +102,7 @@ void main() {
 
         // Handle background hit / scene left
         if (payload.hit.dist < 0) {
-            result += prefixWeight * vec3(0.0); // TODO background radiance + MIS
+            result += prefixWeight * vec3(1.0); // TODO background radiance + MIS
             break;
         }
 
@@ -144,7 +128,6 @@ void main() {
         }
 
         Material material = materials[payload.hit.materialIdx];
-        vec3 baseClr = texture(textures[material.BaseColorIdx], payload.hit.uv).xyz;
 
         // Perform next event estimation
         uint emitterIdx = rngNextInt(payload.rngState, numEmitter);
@@ -176,7 +159,8 @@ void main() {
             if (!payload.occluded) {
                 vec3 inDir = worldToShading * dirToLight;
 
-                vec3 bsdfTimesCos = baseClr / PI * abs(inDir.z);
+                MaterialEvaluation eval = mtlEvaluate(material, payload.hit, false, outDir, inDir);
+                vec3 bsdfTimesCos = eval.bsdf * abs(inDir.z);
                 if (inDir.z * outDir.z < 0.0)  // Check that we are in the correct hemisphere
                     bsdfTimesCos = vec3(0);
 
@@ -192,11 +176,14 @@ void main() {
         }
 
         // Sample the next direction
-        vec3 inDir = sampleCosHemisphere(rngNextVec2(payload.rngState), lastPdf);
-        if (outDir.z < 0) inDir.z = -inDir.z;
-        direction = shadingToWorld * inDir;
+        MaterialSample dirSample = mtlSample(material, payload.hit, false, outDir, rngNextVec2(payload.rngState));
+        direction = shadingToWorld * dirSample.inDir;
+        lastPdf = dirSample.value.pdf;
 
-        prefixWeight *= baseClr; // cos / pi cancels with the sampling PDF
+        if (lastPdf == 0)
+            break;
+
+        prefixWeight *= dirSample.value.bsdf * abs(dirSample.inDir.z) / lastPdf;
 
         origin = offsetPoint(payload.hit, direction);
         tmin = payload.hit.errorOffset;
