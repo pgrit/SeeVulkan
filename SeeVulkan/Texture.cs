@@ -1,6 +1,6 @@
 namespace SeeVulkan;
 
-unsafe class Texture : VulkanComponent, IDisposable
+public unsafe class Texture : VulkanComponent, IDisposable
 {
     public Image Image;
     public ImageView ImageView;

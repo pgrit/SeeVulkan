@@ -4,7 +4,7 @@ using MonochromeImage = SimpleImageIO.MonochromeImage;
 
 namespace SeeVulkan;
 
-class MaterialLibrary : IDisposable
+public class MaterialLibrary : IDisposable
 {
     List<MaterialParameters> materials = [];
     List<SimpleImageIO.Image> rawTextures = [];
@@ -34,8 +34,6 @@ class MaterialLibrary : IDisposable
             result.Anisotropic = 0;
             result.SpecularTransmittance = 0;
             result.IndexOfRefraction = 1;
-            result.Thin = false;
-            result.DiffuseTransmittance = 0;
         }
         else if (material is SeeSharp.Shading.Materials.GenericMaterial genericMtl)
         {
@@ -50,8 +48,6 @@ class MaterialLibrary : IDisposable
             result.Anisotropic = genericMtl.MaterialParameters.Anisotropic;
             result.SpecularTransmittance = genericMtl.MaterialParameters.SpecularTransmittance;
             result.IndexOfRefraction = genericMtl.MaterialParameters.IndexOfRefraction;
-            result.Thin = genericMtl.MaterialParameters.Thin;
-            result.DiffuseTransmittance = genericMtl.MaterialParameters.DiffuseTransmittance;
         }
 
         materials.Add(result);

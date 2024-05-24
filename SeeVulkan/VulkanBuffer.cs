@@ -1,6 +1,6 @@
 namespace SeeVulkan;
 
-unsafe class VulkanBuffer : IDisposable
+public unsafe class VulkanBuffer : IDisposable
 {
     public Buffer Buffer;
     public DeviceMemory Memory;

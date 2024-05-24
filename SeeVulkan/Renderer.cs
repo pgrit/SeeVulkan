@@ -3,7 +3,7 @@ using SeeSharp.Common;
 
 namespace SeeVulkan;
 
-class Renderer : IDisposable
+public class Renderer : IDisposable
 {
     VulkanRayDevice device;
     SwapChain swapChain;

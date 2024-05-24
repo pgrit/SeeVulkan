@@ -2,7 +2,7 @@ using System.Collections.Frozen;
 
 namespace SeeVulkan;
 
-class ShaderDirectory
+public class ShaderDirectory
 {
     public string[] ShaderNames;
     Dictionary<string, long> timestamps = [];

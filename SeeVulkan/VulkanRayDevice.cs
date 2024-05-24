@@ -1,6 +1,6 @@
 namespace SeeVulkan;
 
-unsafe class VulkanRayDevice : IDisposable
+public unsafe class VulkanRayDevice : IDisposable
 {
     const bool EnableValidationLayers = true;
 

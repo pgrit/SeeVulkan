@@ -3,7 +3,7 @@ using SimpleImageIO;
 
 namespace SeeVulkan;
 
-struct MaterialParameters
+public struct MaterialParameters
 {
     public uint BaseColorIdx;
     public uint RoughnessIdx;
@@ -12,23 +12,21 @@ struct MaterialParameters
     public float Anisotropic;
     public float SpecularTransmittance;
     public float IndexOfRefraction;
-    public bool Thin;
-    public float DiffuseTransmittance;
 }
 
-record struct MeshEmission(Vector3 Radiance)
+public record struct MeshEmission(Vector3 Radiance)
 {
 }
 
-record struct Emitter(uint MeshIdx, uint TriangleIdx)
+public record struct Emitter(uint MeshIdx, uint TriangleIdx)
 {
 }
 
-class EmitterData : IDisposable
+public class EmitterData : IDisposable
 {
     public void Dispose()
     {
-        EmitterList.Dispose();
+        EmitterList?.Dispose();
     }
 
     public List<MeshEmission> MeshEmissionData = [];
@@ -68,10 +66,23 @@ class EmitterData : IDisposable
 
     public void Prepare(VulkanRayDevice rayDevice)
     {
-        EmitterList = VulkanBuffer.Make<Emitter>(rayDevice,
-            BufferUsageFlags.ShaderDeviceAddressBit,
-            MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
-            emitters.ToArray()
-        );
+        if (NumEmitters == 0)
+        {
+            // Store a fake emitter that will never be used so we don't need special case handling
+            // while also not crashing the GPU driver either :)
+            EmitterList = VulkanBuffer.Make<Emitter>(rayDevice,
+                BufferUsageFlags.ShaderDeviceAddressBit,
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+                [ new() ]
+            );
+        }
+        else
+        {
+            EmitterList = VulkanBuffer.Make<Emitter>(rayDevice,
+                BufferUsageFlags.ShaderDeviceAddressBit,
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+                emitters.ToArray()
+            );
+        }
     }
 }

@@ -1,6 +1,6 @@
 namespace SeeVulkan;
 
-class Mesh
+public class Mesh
 {
     public struct Vertex
     {

@@ -1,6 +1,6 @@
 namespace SeeVulkan;
 
-class VulkanComponent
+public class VulkanComponent
 {
     protected VulkanRayDevice rayDevice;
     protected Vk vk => rayDevice.Vk;
