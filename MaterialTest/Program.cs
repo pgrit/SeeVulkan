@@ -8,12 +8,12 @@ var scene = SceneRegistry.LoadScene("MaterialTester", maxDepth: 2).MakeScene();
 
 scene.Meshes[0].Material = new GenericMaterial(new GenericMaterial.Parameters()
 {
-    Roughness = new(0.1f),
-    Anisotropic = 0.0f,
-    Metallic = 0.0f,
+    Roughness = new(0.2f),
+    Anisotropic = 0.83f,
+    Metallic = 0.9f,
     IndexOfRefraction = 1.45f,
     SpecularTintStrength = 1.0f,
-    SpecularTransmittance = 0.8f,
+    SpecularTransmittance = 0.0f,
     BaseColor = new(new RgbColor(0.3f, 0.7f, 0.9f))
 });
 

@@ -6,44 +6,12 @@ struct MaterialLocalParams {
     vec3 specularTint;
     float alphaX, alphaY;
     vec3 specularTransmittance;
+    float probDiffuse, probReflect, probTransmit;
 };
 
 float luminance(vec3 clr) {
     return 0.212671 * clr.x + 0.71516 * clr.y + 0.072169 * clr.z;
 }
-
-MaterialLocalParams mtlComputeLocalParams(Material material, HitData hit) {
-    vec3 baseClr = texture(textures[material.BaseColorIdx], hit.uv).xyz;
-    float metallic = texture(textures[material.MetallicIdx], hit.uv).x;
-    float roughness = texture(textures[material.RoughnessIdx], hit.uv).x;
-    float diffuseWeight = (1 - metallic) * (1 - material.SpecularTransmittance);
-
-    float lum = luminance(baseClr);
-    vec3 clrTint = lum > 0 ? baseClr / lum : vec3(1, 1, 1);
-    vec3 specTint = mix(vec3(1, 1, 1), clrTint, material.SpecularTintStrength);
-
-    float r = (material.IndexOfRefraction - 1) / (material.IndexOfRefraction + 1);
-    vec3 specularReflectanceAtNormal = mix(specTint * r * r, baseClr, metallic);
-
-    float aspect = sqrt(1 - material.Anisotropic * 0.9);
-    float alphaX = max(0.001, roughness * roughness / aspect);
-    float alphaY = max(0.001, roughness * roughness * aspect);
-
-    return MaterialLocalParams(
-        baseClr * diffuseWeight,
-        roughness,
-        metallic,
-        specularReflectanceAtNormal,
-        specTint,
-        alphaX, alphaY,
-        baseClr * material.SpecularTransmittance
-    );
-}
-
-struct MaterialEvaluation {
-    vec3 bsdf;
-    float pdf;
-};
 
 float schlickFresnelWeight(float cosTheta) {
     float m = clamp(1 - cosTheta, 0, 1);
@@ -146,13 +114,51 @@ float ggxPdf(float alphaX, float alphaY, vec3 outDir, vec3 normal) {
         * ggxNormalDistribution(alphaX, alphaY, normal) / abs(outDir.z);
 }
 
+MaterialLocalParams mtlComputeLocalParams(Material material, HitData hit, vec3 outDir) {
+    vec3 baseClr = texture(textures[material.BaseColorIdx], hit.uv).xyz;
+    float metallic = texture(textures[material.MetallicIdx], hit.uv).x;
+    float roughness = texture(textures[material.RoughnessIdx], hit.uv).x;
+    float diffuseWeight = (1 - metallic) * (1 - material.SpecularTransmittance);
+
+    float lum = luminance(baseClr);
+    vec3 clrTint = lum > 0 ? baseClr / lum : vec3(1, 1, 1);
+    vec3 specTint = mix(vec3(1, 1, 1), clrTint, material.SpecularTintStrength);
+
+    float r = (material.IndexOfRefraction - 1) / (material.IndexOfRefraction + 1);
+    vec3 specularReflectanceAtNormal = mix(specTint * r * r, baseClr, metallic);
+
+    float aspect = sqrt(1 - material.Anisotropic * 0.9);
+    float alphaX = max(0.001, roughness * roughness / aspect);
+    float alphaY = max(0.001, roughness * roughness * aspect);
+
+    vec3 diel = vec3(fresnelDielectric(outDir.z, 1, material.IndexOfRefraction));
+    vec3 schlick = fresnelSchlick(specularReflectanceAtNormal, outDir.z);
+    vec3 fresnel = mix(diel, schlick, metallic);
+    float f = clamp((fresnel.x + fresnel.y + fresnel.z) / 3, 0.2, 0.8);
+    float specularWeight = f * (1 - diffuseWeight);
+    float transmissionWeight = (1 - f) * (1 - metallic) * material.SpecularTransmittance;
+    float norm = 1 / (specularWeight + transmissionWeight + diffuseWeight);
+
+    return MaterialLocalParams(
+        baseClr * diffuseWeight,
+        roughness,
+        metallic,
+        specularReflectanceAtNormal,
+        specTint,
+        alphaX, alphaY,
+        baseClr * material.SpecularTransmittance,
+        diffuseWeight * norm, specularWeight * norm, transmissionWeight * norm
+    );
+}
+
+struct MaterialEvaluation {
+    vec3 bsdf;
+    float pdf;
+};
+
 // Evaluates the material, returns the product of BSDF value and cosine, the PDFs, and the BSDF value without the cosine
 MaterialEvaluation mtlEvaluate(Material material, HitData hit, bool isOnLightPath, vec3 outDir, vec3 inDir) {
-    // TODO proper selection probabilities
-    float probDiffuse = 0.2;
-    float probSpecular = 0.4;
-    float probTransmit = 0.4;
-    MaterialLocalParams localParams = mtlComputeLocalParams(material, hit);
+    MaterialLocalParams localParams = mtlComputeLocalParams(material, hit, outDir);
 
     float cosThetaO = abs(outDir.z);
     float cosThetaI = abs(inDir.z);
@@ -171,8 +177,8 @@ MaterialEvaluation mtlEvaluate(Material material, HitData hit, bool isOnLightPat
     if (sameShadingHemisphere) {
         if (sameGeometricHemisphere)
             bsdf += localParams.diffuseReflectance / PI * (1 - fresnelOut * 0.5) * (1 - fresnelIn * 0.5);
-        pdfFwd += probDiffuse * cosThetaI / PI;
-        pdfRev += probDiffuse * cosThetaO / PI; // TODO reverse select prob
+        pdfFwd += localParams.probDiffuse * cosThetaI / PI;
+        pdfRev += localParams.probDiffuse * cosThetaO / PI; // TODO reverse select localParams.prob
     }
 
     vec3 halfVector = outDir + inDir;
@@ -207,8 +213,8 @@ MaterialEvaluation mtlEvaluate(Material material, HitData hit, bool isOnLightPat
             float reflectJacobianRev = abs(4 * cosThetaD);
             if (reflectJacobianFwd != 0.0 && reflectJacobianRev != 0.0) // Prevent NaNs from degenerate cases
             {
-                pdfFwd += probSpecular * ggxPdf(localParams.alphaX, localParams.alphaY, outDir, halfVector) / reflectJacobianFwd;
-                pdfRev += probSpecular * ggxPdf(localParams.alphaX, localParams.alphaY, inDir, halfVector) / reflectJacobianRev; // TODO reverse select prob
+                pdfFwd += localParams.probReflect * ggxPdf(localParams.alphaX, localParams.alphaY, outDir, halfVector) / reflectJacobianFwd;
+                pdfRev += localParams.probReflect * ggxPdf(localParams.alphaX, localParams.alphaY, inDir, halfVector) / reflectJacobianRev; // TODO reverse select localParams.prob
             }
         }
     }
@@ -247,7 +253,7 @@ MaterialEvaluation mtlEvaluate(Material material, HitData hit, bool isOnLightPat
             float reflectJacobianFwd = abs(4 * dot(outDir, halfVector));
             if (reflectJacobianFwd != 0.0) // Prevent NaNs from degenerate cases
             {
-                pdfFwd += probTransmit * ggxPdf(localParams.alphaX, localParams.alphaY, outDir, halfVector) / reflectJacobianFwd;
+                pdfFwd += localParams.probTransmit * ggxPdf(localParams.alphaX, localParams.alphaY, outDir, halfVector) / reflectJacobianFwd;
             }
         }
 
@@ -260,7 +266,7 @@ MaterialEvaluation mtlEvaluate(Material material, HitData hit, bool isOnLightPat
             float reflectJacobianRev = abs(4 * cosThetaD);
             if (reflectJacobianRev != 0.0) // Prevent NaNs from degenerate cases
             {
-                pdfRev += probTransmit * ggxPdf(localParams.alphaX, localParams.alphaY, inDir, halfVector) / reflectJacobianRev; // TODO reverse select prob
+                pdfRev += localParams.probTransmit * ggxPdf(localParams.alphaX, localParams.alphaY, inDir, halfVector) / reflectJacobianRev; // TODO reverse select localParams.prob
             }
         }
 
@@ -269,7 +275,7 @@ MaterialEvaluation mtlEvaluate(Material material, HitData hit, bool isOnLightPat
         {
             vec3 wh = (!sameHemisphere(outDir, halfVectorTransmit)) ? -halfVectorTransmit : halfVectorTransmit;
             float jacobian = eta * eta * max(0, dot(inDir, -wh)) / (sqrtDenom * sqrtDenom);
-            pdfFwd += probTransmit * ggxPdf(localParams.alphaX, localParams.alphaY, outDir, wh) * jacobian;
+            pdfFwd += localParams.probTransmit * ggxPdf(localParams.alphaX, localParams.alphaY, outDir, wh) * jacobian;
         }
 
         // For the reverse PDF, we first need to compute the corresponding half vector
@@ -283,7 +289,7 @@ MaterialEvaluation mtlEvaluate(Material material, HitData hit, bool isOnLightPat
             if (sqrtDenomIn != 0)  // Prevent NaN in corner case
             {
                 float jacobian = etaIn * etaIn * max(0, dot(outDir, -halfVectorRev)) / (sqrtDenomIn * sqrtDenomIn);
-                pdfRev += probTransmit * ggxPdf(localParams.alphaX, localParams.alphaY, inDir, halfVectorRev) * jacobian; // TODO reverse select prob
+                pdfRev += localParams.probTransmit * ggxPdf(localParams.alphaX, localParams.alphaY, inDir, halfVectorRev) * jacobian; // TODO reverse select localParams.prob
             }
         }
     }
@@ -348,24 +354,19 @@ struct MaterialSample {
 };
 
 MaterialSample mtlSample(Material material, HitData hit, bool isOnLightPath, vec3 outDir, vec2 primary) {
-    // TODO proper selection probabilities
-    float probDiffuse = 0.2;
-    float probSpecular = 0.4;
-    float probTransmit = 0.4;
-
-    MaterialLocalParams localParams = mtlComputeLocalParams(material, hit);
+    MaterialLocalParams localParams = mtlComputeLocalParams(material, hit, outDir);
 
     // Select a component to sample from and remap the primary sample coordinate
     int c;
-    if (primary.x <= probDiffuse) {
+    if (primary.x <= localParams.probDiffuse) {
         c = 0;
-        primary.x = min(primary.x / probDiffuse, 1);
-    } else if (primary.x <= probDiffuse + probSpecular) {
+        primary.x = min(primary.x / localParams.probDiffuse, 1);
+    } else if (primary.x <= localParams.probDiffuse + localParams.probReflect) {
         c = 1;
-        primary.x = min((primary.x - probDiffuse) / probSpecular, 1);
+        primary.x = min((primary.x - localParams.probDiffuse) / localParams.probReflect, 1);
     } else {
         c = 2;
-        primary.x = min((primary.x - probDiffuse - probSpecular) / probTransmit, 1);
+        primary.x = min((primary.x - localParams.probDiffuse - localParams.probReflect) / localParams.probTransmit, 1);
     }
 
     // Sample a direction from the selected component
@@ -377,8 +378,6 @@ MaterialSample mtlSample(Material material, HitData hit, bool isOnLightPath, vec
     }
     else {
         vec3 halfVector = ggxSample(localParams.alphaX, localParams.alphaY, outDir, primary);
-
-        // TODO set the selection between reflect and refract based on the selected normal?
 
         if (c == 1) {
             inDir = -reflect(outDir, halfVector);
