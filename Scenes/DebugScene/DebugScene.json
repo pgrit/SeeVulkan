@@ -1,0 +1,215 @@
+{
+  "materials": [
+    {
+      "type": "generic",
+      "baseColor": {
+        "type": "rgb",
+        "value": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "roughness": 0.0,
+      "anisotropic": 0.0,
+      "diffuseTransmittance": 0.0,
+      "IOR": 1.4500000476837158,
+      "metallic": 0.0,
+      "specularTintStrength": 0.0,
+      "specularTransmittance": 1.0,
+      "thin": false,
+      "emission": {
+        "type": "rgb",
+        "value": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "emissionIsGlossy": false,
+      "emissionExponent": 20.0,
+      "name": "cube"
+    },
+    {
+      "type": "generic",
+      "baseColor": {
+        "type": "rgb",
+        "value": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "roughness": 1.0,
+      "anisotropic": 0.0,
+      "diffuseTransmittance": 0.0,
+      "IOR": 1.4500000476837158,
+      "metallic": 0.0,
+      "specularTintStrength": 0.0,
+      "specularTransmittance": 0.0,
+      "thin": false,
+      "emission": {
+        "type": "rgb",
+        "value": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "emissionIsGlossy": false,
+      "emissionExponent": 20.0,
+      "name": "Dots Stroke"
+    },
+    {
+      "type": "generic",
+      "baseColor": {
+        "type": "rgb",
+        "value": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "roughness": 1.0,
+      "anisotropic": 0.0,
+      "diffuseTransmittance": 0.0,
+      "IOR": 1.4500000476837158,
+      "metallic": 0.0,
+      "specularTintStrength": 0.0,
+      "specularTransmittance": 0.0,
+      "thin": false,
+      "emission": {
+        "type": "rgb",
+        "value": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "emissionIsGlossy": false,
+      "emissionExponent": 20.0,
+      "name": "floor1"
+    },
+    {
+      "type": "generic",
+      "baseColor": {
+        "type": "rgb",
+        "value": [
+          0.38800108432769775,
+          0.05891728401184082,
+          0.036105960607528687
+        ]
+      },
+      "roughness": 1.0,
+      "anisotropic": 0.0,
+      "diffuseTransmittance": 0.0,
+      "IOR": 1.1456522941589355,
+      "metallic": 0.0,
+      "specularTintStrength": 0.0,
+      "specularTransmittance": 0.0,
+      "thin": false,
+      "emission": {
+        "type": "rgb",
+        "value": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "emissionIsGlossy": false,
+      "emissionExponent": 20.0,
+      "name": "floor2"
+    },
+    {
+      "type": "generic",
+      "baseColor": {
+        "type": "rgb",
+        "value": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "roughness": 1.0,
+      "anisotropic": 0.0,
+      "diffuseTransmittance": 0.0,
+      "IOR": 1.4500000476837158,
+      "metallic": 0.0,
+      "specularTintStrength": 0.0,
+      "specularTransmittance": 0.0,
+      "thin": false,
+      "emission": {
+        "type": "rgb",
+        "value": [
+          10.0,
+          10.0,
+          10.0
+        ]
+      },
+      "emissionIsGlossy": false,
+      "emissionExponent": 20.0,
+      "name": "light"
+    }
+  ],
+  "transforms": [
+    {
+      "name": "camera",
+      "position": [
+        1.756173014640808,
+        3.42734432220459,
+        -9.31289005279541
+      ],
+      "rotation": [
+        -21.115288257995303,
+        166.49093852462062,
+        0.7857570750318731
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    }
+  ],
+  "cameras": [
+    {
+      "fov": 22.895194130645738,
+      "transform": "camera",
+      "name": "default",
+      "type": "perspective"
+    }
+  ],
+  "objects": [
+    {
+      "name": "Cube",
+      "type": "ply",
+      "material": "floor1",
+      "relativePath": "Meshes/Cube.0.ply"
+    },
+    {
+      "name": "Cube",
+      "type": "ply",
+      "material": "floor2",
+      "relativePath": "Meshes/Cube.1.ply"
+    },
+    {
+      "name": "Cube.001",
+      "type": "ply",
+      "material": "cube",
+      "relativePath": "Meshes/Cube.001.0.ply"
+    },
+    {
+      "name": "Plane",
+      "type": "ply",
+      "material": "light",
+      "relativePath": "Meshes/Plane.0.ply"
+    },
+    {
+      "name": "Cube.002",
+      "type": "ply",
+      "material": "cube",
+      "relativePath": "Meshes/Cube.002.0.ply"
+    }
+  ],
+  "exposure": 0.0
+}
