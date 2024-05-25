@@ -13,6 +13,20 @@ layout(location = 0) rayPayloadInEXT RayPayload payload;
 
 hitAttributeEXT vec2 attribs;
 
+void computeBasisVectors(vec3 normal, out mat3 shadingToWorld, out mat3 worldToShading) {
+    vec3 tangent;
+    if (abs(normal.x) > abs(normal.y)) {
+        float denom = sqrt(normal.x * normal.x + normal.z * normal.z);
+        tangent = vec3(-normal.z, 0.0, normal.x) / denom;
+    } else {
+        float denom = sqrt(normal.y * normal.y + normal.z * normal.z);
+        tangent = vec3(0.0, normal.z, -normal.y) / denom;
+    }
+    vec3 binormal = cross(normal, tangent);
+    shadingToWorld = mat3(tangent, binormal, normal);
+    worldToShading = transpose(shadingToWorld);
+}
+
 void main()
 {
     const int primId = gl_PrimitiveID;
@@ -25,6 +39,7 @@ void main()
         barycentricCoords.x * tri.v1.normal +
         barycentricCoords.y * tri.v2.normal +
         barycentricCoords.z * tri.v3.normal;
+    normal = normalize(normal);
 
     vec2 uv =
         barycentricCoords.x * tri.v1.uv +
@@ -37,6 +52,8 @@ void main()
     // (math borrowed from the Embree example renderer)
     float errorOffset = max(max(abs(hitp.x), abs(hitp.y)), max(abs(hitp.z), gl_HitTEXT)) * 32.0 * 1.19209e-07;
 
-    payload.hit = HitData(hitp, gl_HitTEXT, normal, tri.geomNormal, uv, errorOffset, tri.materialId, gl_InstanceID, primId,
-        tri.emission);
+    mat3 shadingToWorld, worldToShading;
+    computeBasisVectors(normal, shadingToWorld, worldToShading);
+
+    payload.hit = HitData(hitp, gl_HitTEXT, uv, errorOffset, tri, shadingToWorld, worldToShading);
 }

@@ -35,25 +35,15 @@ layout(buffer_reference, scalar) buffer EmitterBuffer {
     Emitter data[];
 };
 
-const int MAX_DEPTH = 6;
-const int MIN_DEPTH = 6;
+const int MAX_DEPTH = 10;
+const int MIN_DEPTH = 1;
 
-void computeBasisVectors(vec3 normal, out mat3 shadingToWorld, out mat3 worldToShading) {
-    vec3 tangent;
-    if (abs(normal.x) > abs(normal.y)) {
-        float denom = sqrt(normal.x * normal.x + normal.z * normal.z);
-        tangent = vec3(-normal.z, 0.0, normal.x) / denom;
-    } else {
-        float denom = sqrt(normal.y * normal.y + normal.z * normal.z);
-        tangent = vec3(0.0, normal.z, -normal.y) / denom;
-    }
-    vec3 binormal = cross(normal, tangent);
-    shadingToWorld = mat3(tangent, binormal, normal);
-    worldToShading = transpose(shadingToWorld);
+vec3 offsetPoint(vec3 pos, vec3 dir, vec3 normal, float offset) {
+    return pos + sign(dot(dir, normal)) * offset * normal;
 }
 
 vec3 offsetPoint(HitData from, vec3 dir) {
-    return from.pos + sign(dot(dir, from.geomNormal)) * from.errorOffset * from.geomNormal;
+    return offsetPoint(from.pos, dir, from.triangle.geomNormal, from.errorOffset);
 }
 
 vec3 sampleTriangle(Triangle triangle, vec2 primary, out float errorOffset, out vec3 normal) {
@@ -67,10 +57,6 @@ vec3 sampleTriangle(Triangle triangle, vec2 primary, out float errorOffset, out 
     normal = (1.0 - u - v) * triangle.v1.normal + u * triangle.v2.normal + v * triangle.v3.normal;
 
     return (1.0 - u - v) * triangle.v1.pos + u * triangle.v2.pos + v * triangle.v3.pos;
-}
-
-float lengthSqr(vec3 v) {
-    return dot(v, v);
 }
 
 void main() {
@@ -107,29 +93,24 @@ void main() {
             break;
         }
 
-        mat3 shadingToWorld, worldToShading;
-        computeBasisVectors(payload.hit.normal, shadingToWorld, worldToShading);
-        // computeBasisVectors(payload.hit.geomNormal, shadingToWorld, worldToShading);
-        vec3 outDir = worldToShading * (-direction);
+        vec3 outDir = payload.hit.worldToShading * (-direction);
 
         // Handle emitter hits
-        if (!isBlack(payload.hit.emission.radiance) && outDir.z > 0) { // Emitters are one-sided
-            Triangle emitterTriangle = getTriangle(payload.hit.meshIdx, payload.hit.triangleIdx);
-
+        if (!isBlack(payload.hit.triangle.emission.radiance) && outDir.z > 0) { // Emitters are one-sided
             float misWeight = 1;
             if (depth > 1) {
-                float cosLight = abs(dot(emitterTriangle.geomNormal, outDir));
+                float cosLight = abs(dot(payload.hit.triangle.geomNormal, outDir));
                 float d2 = payload.hit.dist * payload.hit.dist;
-                float invNextEventPdf = emitterTriangle.area * numEmitter * cosLight / d2;
+                float invNextEventPdf = payload.hit.triangle.area * numEmitter * cosLight / d2;
                 float pdfRatio = 1.0 / (lastPdf * invNextEventPdf);
                 misWeight = 1 / (1 + pdfRatio * pdfRatio);
             }
 
             if (depth >= MIN_DEPTH)
-                result += prefixWeight * misWeight * payload.hit.emission.radiance;
+                result += prefixWeight * misWeight * payload.hit.triangle.emission.radiance;
         }
 
-        Material material = materials[payload.hit.materialIdx];
+        Material material = materials[payload.hit.triangle.materialId];
 
         // Perform next event estimation
         uint emitterIdx = rngNextInt(payload.rngState, numEmitter);
@@ -137,29 +118,34 @@ void main() {
         Triangle emitterTriangle = getTriangle(emitter.meshIdx, emitter.triangleIdx);
         vec3 radiance = emitterTriangle.emission.radiance;
 
-        // Sample point on the triangle
-        float shadowErrorOffset;
+        // Sample point on the selected emissive triangle
+        float lightPointErrorOffset;
         vec3 emitterShadingNormal;
-        vec3 lightPoint = sampleTriangle(emitterTriangle, rngNextVec2(payload.rngState), shadowErrorOffset, emitterShadingNormal);
+        vec3 lightPoint = sampleTriangle(emitterTriangle, rngNextVec2(payload.rngState), lightPointErrorOffset, emitterShadingNormal);
+        if (dot(emitterTriangle.geomNormal, emitterShadingNormal) < 0)
+            emitterTriangle.geomNormal = -emitterTriangle.geomNormal;
 
         vec3 dirToLight = lightPoint - payload.hit.pos;
 
-        if (depth >= MIN_DEPTH - 1 && dot(emitterShadingNormal, -dirToLight) > 0) { // Check that we are on the right side of the light
-            float d2 = lengthSqr(dirToLight);
-            float d = sqrt(d2);
-            dirToLight /= d;
-
+        if (depth >= MIN_DEPTH - 1 && depth < MAX_DEPTH && dot(emitterTriangle.geomNormal, -dirToLight) > 0) { // Check that we are on the right side of the light
+            // Compute proper offsets for the shadow ray and trace it
+            const float shadowEpsilon = 1e-5; // Fixed constant works here because dirToLight is not normalized yet
+            vec3 p0 = offsetPoint(payload.hit, dirToLight);
+            vec3 p1 = offsetPoint(lightPoint, -dirToLight, emitterTriangle.geomNormal, lightPointErrorOffset);
             payload.occluded = true;
             traceRayEXT(topLevelAS,
                 gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
                 0xff, 0, 0, 0,
-                offsetPoint(payload.hit, dirToLight), 0.0,
-                dirToLight, d - payload.hit.errorOffset * 4,
+                p0, shadowEpsilon,
+                p1 - p0, 1 - shadowEpsilon,
                 0
             );
 
             if (!payload.occluded) {
-                vec3 inDir = worldToShading * dirToLight;
+                float d2 = dot(dirToLight, dirToLight);
+                float d = sqrt(d2);
+                dirToLight /= d;
+                vec3 inDir = payload.hit.worldToShading * dirToLight;
 
                 MaterialEvaluation eval = mtlEvaluate(material, payload.hit, false, outDir, inDir);
                 vec3 bsdfTimesCos = eval.bsdf * abs(inDir.z);
@@ -174,10 +160,10 @@ void main() {
 
         // Sample the next direction
         MaterialSample dirSample = mtlSample(material, payload.hit, false, outDir, rngNextVec2(payload.rngState));
-        direction = shadingToWorld * dirSample.inDir;
+        direction = payload.hit.shadingToWorld * dirSample.inDir;
         lastPdf = dirSample.value.pdf;
 
-        if (lastPdf == 0)
+        if (lastPdf == 0) // Prevent NaNs from corner cases in material sampling
             break;
 
         prefixWeight *= dirSample.value.bsdf * abs(dirSample.inDir.z) / lastPdf;

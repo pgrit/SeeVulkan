@@ -2,6 +2,7 @@
 using SeeSharp.Cameras;
 using SeeSharp.Experiments;
 using SeeVulkan;
+using SimpleImageIO;
 
 bool enableHDR = true;
 
@@ -17,7 +18,9 @@ rootCommand.SetHandler((useHdr) =>
 }, hdrOption);
 rootCommand.Invoke(args);
 
-var scene = SceneRegistry.LoadScene("RoughGlasses").MakeScene();
+SceneRegistry.AddSourceRelativeToScript("../Scenes");
+var scene = SceneRegistry.LoadScene("RgbSofa").MakeScene();
+// var scene = SceneRegistry.LoadScene("DebugScene").MakeScene();
 
 // Render reference image with SeeSharp
 const int width = 640;
@@ -50,9 +53,10 @@ emitters.Convert(scene);
     return (camera.CameraToWorld, camera.ViewToCamera);
 }
 
-// Renderer.RenderImage(1920, 1080, 64,
-//     meshes, UpdateCameraMatrices, ShaderDirectory.MakeRelativeToScript("./Shaders"), materialLibrary, emitters)
-// .WriteToFile("SeeVulkan.exr");
+Renderer.RenderImage(width, height, 16,
+    meshes, UpdateCameraMatrices, ShaderDirectory.MakeRelativeToScript("./Shaders"), materialLibrary, emitters)
+.WriteToFile("Results/SeeVulkan.exr");
+TevIpc.ShowImage("Results/SeeVulkan.exr", new RgbImage("Results/SeeVulkan.exr"));
 
 var options = WindowOptions.DefaultVulkan with {
     Size = new(width, height),

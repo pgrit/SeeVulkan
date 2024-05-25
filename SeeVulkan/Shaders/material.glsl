@@ -166,7 +166,8 @@ MaterialEvaluation mtlEvaluate(Material material, HitData hit, bool isOnLightPat
 
     vec3 bsdf = vec3(0);
 
-    bool sameGeometricHemisphere = sameHemisphere(outDir, inDir); // TODO heed face normals here, not shading ones
+    vec3 geomNormalShade = hit.worldToShading * hit.triangle.geomNormal;
+    bool sameGeometricHemisphere = dot(outDir, geomNormalShade) * dot(inDir, geomNormalShade) >= 0;
     bool sameShadingHemisphere = sameHemisphere(outDir, inDir);
 
     float pdfFwd = 0.0;

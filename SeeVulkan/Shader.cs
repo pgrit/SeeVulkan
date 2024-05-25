@@ -76,7 +76,7 @@ unsafe class Shader : IDisposable
         try
         {
             string glslcExe = "glslc"; // TODO assumes it is in the path - better solution?
-            var p = System.Diagnostics.Process.Start(glslcExe, ["--target-env=vulkan1.3", filename, "-o", outfile]);
+            var p = Process.Start(glslcExe, ["--target-env=vulkan1.3", filename, "-o", outfile]);
             p.WaitForExit();
             if (p.ExitCode != 0)
                 throw new Exception("glslc shader compilation failed");

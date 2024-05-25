@@ -69,10 +69,9 @@ public class ShaderDirectory
     public bool ScanForUpdates()
     {
         bool update = false;
-        string lastName = "";
-        try
+        foreach (var name in ShaderNames)
         {
-            foreach (var name in ShaderNames)
+            try
             {
                 // Check if any dependency was changed -- change time is reset below automatically
                 bool depUpdate = false;
@@ -95,7 +94,6 @@ public class ShaderDirectory
 
                     // Rescan dependencies in case an include was changed (also right away to avoid compile loop)
                     shaderDependencies[name] = ScanDependencies(fname);
-                    lastName = name;
                     var code = Shader.CompileShader(fname);
                     ShaderCodes[name] = code;
                     update = true;
@@ -103,14 +101,17 @@ public class ShaderDirectory
                     Logger.Log($"{name} recompiled successfully");
                 }
             }
+            catch(IOException)
+            {
+                // The file is likely open in another process, e.g., because the editor is in the middle of saving it.
+                // Let's wait until the next tick and try again.
+            }
+            catch(Exception exc)
+            {
+                Logger.Error($"{name}: recompile failed: {exc.Message}");
+            }
         }
-        catch
-        {
-            // If compilation fails, we pretend the file hadn't changed. Error message will be output
-            // to the console by glslc
-            Logger.Error($"{lastName}: recompile failed");
-            return false;
-        }
+
         return update;
     }
 }
