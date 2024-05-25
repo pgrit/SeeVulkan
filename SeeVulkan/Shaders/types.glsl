@@ -6,8 +6,6 @@ struct Material {
     float Anisotropic;
     float SpecularTransmittance;
     float IndexOfRefraction;
-    bool Thin;
-    float DiffuseTransmittance;
 };
 
 struct MeshEmission {
@@ -18,6 +16,7 @@ struct HitData {
     vec3 pos;
     float dist;
     vec3 normal;
+    vec3 geomNormal;
     vec2 uv;
     float errorOffset;
     uint materialIdx;

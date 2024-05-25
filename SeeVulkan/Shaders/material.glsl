@@ -131,12 +131,13 @@ MaterialLocalParams mtlComputeLocalParams(Material material, HitData hit, vec3 o
     float alphaX = max(0.001, roughness * roughness / aspect);
     float alphaY = max(0.001, roughness * roughness * aspect);
 
+    // Compute selection probabilities
     vec3 diel = vec3(fresnelDielectric(outDir.z, 1, material.IndexOfRefraction));
     vec3 schlick = fresnelSchlick(specularReflectanceAtNormal, outDir.z);
     vec3 fresnel = mix(diel, schlick, metallic);
     float f = clamp((fresnel.x + fresnel.y + fresnel.z) / 3, 0.2, 0.8);
-    float specularWeight = f * (1 - diffuseWeight);
-    float transmissionWeight = (1 - f) * (1 - metallic) * material.SpecularTransmittance;
+    float specularWeight = (1 - diffuseWeight) * f;
+    float transmissionWeight = (1 - diffuseWeight) * (1 - f) * material.SpecularTransmittance;
     float norm = 1 / (specularWeight + transmissionWeight + diffuseWeight);
 
     return MaterialLocalParams(
@@ -188,7 +189,7 @@ MaterialEvaluation mtlEvaluate(Material material, HitData hit, bool isOnLightPat
         // retro reflectance component
         float cosThetaD = dot(inDir, halfVector);
         float r = 2 * localParams.roughness * cosThetaD * cosThetaD;
-        if (sameGeometricHemisphere)
+        if (sameShadingHemisphere && sameGeometricHemisphere)
             bsdf += localParams.diffuseReflectance / PI * r * (fresnelOut + fresnelIn + fresnelOut * fresnelIn * (r - 1));
 
         // Microfacet reflection

@@ -17,8 +17,22 @@ rootCommand.SetHandler((useHdr) =>
 }, hdrOption);
 rootCommand.Invoke(args);
 
-
 var scene = SceneRegistry.LoadScene("RoughGlasses").MakeScene();
+
+// Render reference image with SeeSharp
+const int width = 640;
+const int height = 480;
+scene.FrameBuffer = new(width, height, "Results/SeeSharp.exr", SeeSharp.Images.FrameBuffer.Flags.Recommended | SeeSharp.Images.FrameBuffer.Flags.SendToTev);
+scene.Prepare();
+new SeeSharp.Integrators.PathTracer()
+{
+    TotalSpp = 16,
+    NumShadowRays = 1,
+    EnableBsdfDI = true,
+    RenderTechniquePyramid = true,
+    MaxDepth = 10,
+}.Render(scene);
+scene.FrameBuffer.WriteToFile();
 
 MaterialLibrary materialLibrary = new();
 
@@ -36,13 +50,12 @@ emitters.Convert(scene);
     return (camera.CameraToWorld, camera.ViewToCamera);
 }
 
-Renderer.RenderImage(1920, 1080, 64,
-    meshes, UpdateCameraMatrices, ShaderDirectory.MakeRelativeToScript("./Shaders"), materialLibrary, emitters)
-.WriteToFile("SeeVulkan.exr");
-
+// Renderer.RenderImage(1920, 1080, 64,
+//     meshes, UpdateCameraMatrices, ShaderDirectory.MakeRelativeToScript("./Shaders"), materialLibrary, emitters)
+// .WriteToFile("SeeVulkan.exr");
 
 var options = WindowOptions.DefaultVulkan with {
-    Size = new(800, 600),
+    Size = new(width, height),
     Title = "SeeVulkan",
 };
 

@@ -1,6 +1,3 @@
-// layout(binding = 3, set = 0) readonly buffer Materials { Material materials[]; };
-// layout(binding = 4, set = 0) uniform sampler2D textures[];
-
 layout(push_constant) uniform PerMeshDataBufferAddress {
     uint64_t perMeshDataBufferAddress;
 };
@@ -41,6 +38,8 @@ struct Triangle {
     Vertex v3;
     float area;
     vec3 geomNormal;
+    uint materialId;
+    MeshEmission emission;
 };
 
 Triangle getTriangle(uint meshId, uint triId) {
@@ -56,5 +55,5 @@ Triangle getTriangle(uint meshId, uint triId) {
     float lenN = length(n);
     float area = lenN * 0.5;
 
-    return Triangle(v1, v2, v3, area, n / lenN);
+    return Triangle(v1, v2, v3, area, n / lenN, meshData.materialId, meshData.emission);
 }

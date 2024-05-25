@@ -1,4 +1,6 @@
 using System.Collections.Frozen;
+using System.Text.RegularExpressions;
+using SeeSharp.Common;
 
 namespace SeeVulkan;
 
@@ -12,7 +14,29 @@ public class ShaderDirectory
         ".rchit", ".rmiss", ".rgen", ".comp"
     }.ToFrozenSet();
 
+    Dictionary<string, List<(string, long)>> shaderDependencies = [];
+
     string path;
+
+    public List<(string, long)> ScanDependencies(string fname)
+    {
+        List<(string, long)> dependencies = [];
+
+        var lines = File.ReadAllLines(fname);
+        foreach (var line in lines)
+        {
+            var match = Regex.Match(line, "\\s*#include\\s*\"(.*)\"\\s*");
+            if (match.Success)
+            {
+                string depname = match.Groups[1].Value;
+                string deppath = Path.Join(Path.GetDirectoryName(fname), depname);
+                dependencies.Add((deppath, File.GetLastWriteTime(deppath).ToFileTime()));
+                dependencies.AddRange(ScanDependencies(deppath));
+            }
+        }
+
+        return dependencies;
+    }
 
     public ShaderDirectory(string path)
     {
@@ -32,6 +56,7 @@ public class ShaderDirectory
             var fname = Path.Join(path, name);
             long newTime = File.GetLastWriteTime(fname).ToFileTime();
             var code = Shader.CompileShader(fname);
+            shaderDependencies[name] = ScanDependencies(fname);
             timestamps[name] = newTime;
             ShaderCodes[name] = code;
         }
@@ -44,19 +69,38 @@ public class ShaderDirectory
     public bool ScanForUpdates()
     {
         bool update = false;
+        string lastName = "";
         try
         {
             foreach (var name in ShaderNames)
             {
+                // Check if any dependency was changed -- change time is reset below automatically
+                bool depUpdate = false;
+                foreach (var (dep, time) in shaderDependencies[name])
+                {
+                    if (File.GetLastWriteTime(dep).ToFileTime() > time)
+                    {
+                        depUpdate = true;
+                        break;
+                    }
+                }
+
+                // Check if the shader itself was updated
                 var fname = Path.Join(path, name);
                 long newTime = File.GetLastWriteTime(fname).ToFileTime();
-                if (newTime > timestamps[name])
+                if (depUpdate || newTime > timestamps[name])
                 {
                     // Update the time first, so we don't recompile forever if glslc failed
                     timestamps[name] = newTime;
+
+                    // Rescan dependencies in case an include was changed (also right away to avoid compile loop)
+                    shaderDependencies[name] = ScanDependencies(fname);
+                    lastName = name;
                     var code = Shader.CompileShader(fname);
                     ShaderCodes[name] = code;
                     update = true;
+
+                    Logger.Log($"{name} recompiled successfully");
                 }
             }
         }
@@ -64,6 +108,7 @@ public class ShaderDirectory
         {
             // If compilation fails, we pretend the file hadn't changed. Error message will be output
             // to the console by glslc
+            Logger.Error($"{lastName}: recompile failed");
             return false;
         }
         return update;

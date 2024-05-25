@@ -1,3 +1,5 @@
+using SeeSharp.Common;
+
 namespace SeeVulkan;
 
 public unsafe class VulkanRayDevice : IDisposable
@@ -28,20 +30,17 @@ public unsafe class VulkanRayDevice : IDisposable
         switch (severity)
         {
             case DebugUtilsMessageSeverityFlagsEXT.WarningBitExt:
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.Write("[WARN] ");
+                Logger.Warning(Marshal.PtrToStringAnsi((nint)pCallbackData->PMessage));
                 break;
 
             case DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt:
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.Write("[ERROR] ");
+                Logger.Error(Marshal.PtrToStringAnsi((nint)pCallbackData->PMessage));
                 break;
 
             default:
-                return Vk.False;
+                Logger.Log(Marshal.PtrToStringAnsi((nint)pCallbackData->PMessage));
+                break;
         }
-        Console.WriteLine(Marshal.PtrToStringAnsi((nint)pCallbackData->PMessage));
-        Console.ResetColor();
         return Vk.False;
     }
 

@@ -1,6 +1,7 @@
 using SeeSharp.Images;
 using RgbImage = SimpleImageIO.RgbImage;
 using MonochromeImage = SimpleImageIO.MonochromeImage;
+using SeeSharp.Common;
 
 namespace SeeVulkan;
 
@@ -27,13 +28,15 @@ public class MaterialLibrary : IDisposable
             result.RoughnessIdx = AddTexture(rough); // TODO could reuse once via caching...
 
             MonochromeImage metallic = new(1, 1);
-            metallic.Fill(1.0f);
+            metallic.Fill(0.0f);
             result.MetallicIdx = AddTexture(metallic); // TODO could reuse once via caching...
 
             result.SpecularTintStrength = 1;
             result.Anisotropic = 0;
             result.SpecularTransmittance = 0;
             result.IndexOfRefraction = 1;
+
+            Logger.Warning($"DiffuseMaterial not implemented, using matching generic for '{material.Name}'");
         }
         else if (material is SeeSharp.Shading.Materials.GenericMaterial genericMtl)
         {

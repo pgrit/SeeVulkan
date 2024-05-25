@@ -8,12 +8,12 @@ var scene = SceneRegistry.LoadScene("MaterialTester", maxDepth: 2).MakeScene();
 
 scene.Meshes[0].Material = new GenericMaterial(new GenericMaterial.Parameters()
 {
-    Roughness = new(0.2f),
-    Anisotropic = 0.83f,
-    Metallic = 0.9f,
+    Roughness = new(0.01f),
+    Anisotropic = 0.0f,
+    Metallic = 0.0f,
     IndexOfRefraction = 1.45f,
     SpecularTintStrength = 1.0f,
-    SpecularTransmittance = 0.0f,
+    SpecularTransmittance = 1.0f,
     BaseColor = new(new RgbColor(0.3f, 0.7f, 0.9f))
 });
 
@@ -29,9 +29,10 @@ scene.Prepare();
 new PathTracer()
 {
     TotalSpp = 16,
-    NumShadowRays = 0,
+    NumShadowRays = 1,
     EnableBsdfDI = true,
-    MaxDepth = 3,
+    RenderTechniquePyramid = true,
+    MaxDepth = 10,
 }.Render(scene);
 scene.FrameBuffer.WriteToFile();
 

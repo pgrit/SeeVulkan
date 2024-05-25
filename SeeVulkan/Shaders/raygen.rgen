@@ -9,8 +9,6 @@
 #include "types.glsl"
 #include "rng.glsl"
 #include "meshdata.glsl"
-layout(binding = 4, set = 0) uniform sampler2D textures[];
-#include "material.glsl"
 
 layout(binding = 0, set = 0) uniform accelerationStructureEXT topLevelAS;
 layout(binding = 1, set = 0, rgba32f) uniform image2D image;
@@ -22,7 +20,9 @@ layout(binding = 2, set = 0) uniform UniformBufferObject {
     uint numEmitter;
 };
 layout(binding = 3, set = 0) readonly buffer Materials { Material materials[]; };
+layout(binding = 4, set = 0) uniform sampler2D textures[];
 
+#include "material.glsl"
 
 layout(location = 0) rayPayloadEXT RayPayload payload;
 
@@ -35,7 +35,8 @@ layout(buffer_reference, scalar) buffer EmitterBuffer {
     Emitter data[];
 };
 
-const int MAX_DEPTH = 3;
+const int MAX_DEPTH = 6;
+const int MIN_DEPTH = 6;
 
 void computeBasisVectors(vec3 normal, out mat3 shadingToWorld, out mat3 worldToShading) {
     vec3 tangent;
@@ -52,7 +53,7 @@ void computeBasisVectors(vec3 normal, out mat3 shadingToWorld, out mat3 worldToS
 }
 
 vec3 offsetPoint(HitData from, vec3 dir) {
-    return from.pos + sign(dot(dir, from.normal)) * from.errorOffset * from.normal;
+    return from.pos + sign(dot(dir, from.geomNormal)) * from.errorOffset * from.geomNormal;
 }
 
 vec3 sampleTriangle(Triangle triangle, vec2 primary, out float errorOffset, out vec3 normal) {
@@ -102,12 +103,13 @@ void main() {
 
         // Handle background hit / scene left
         if (payload.hit.dist < 0) {
-            result += prefixWeight * vec3(1.0); // TODO background radiance + MIS
+            result += prefixWeight * vec3(0.0); // TODO background radiance + MIS
             break;
         }
 
         mat3 shadingToWorld, worldToShading;
         computeBasisVectors(payload.hit.normal, shadingToWorld, worldToShading);
+        // computeBasisVectors(payload.hit.geomNormal, shadingToWorld, worldToShading);
         vec3 outDir = worldToShading * (-direction);
 
         // Handle emitter hits
@@ -123,8 +125,8 @@ void main() {
                 misWeight = 1 / (1 + pdfRatio * pdfRatio);
             }
 
-            result += prefixWeight * misWeight * payload.hit.emission.radiance;
-            // TODO MIS
+            if (depth >= MIN_DEPTH)
+                result += prefixWeight * misWeight * payload.hit.emission.radiance;
         }
 
         Material material = materials[payload.hit.materialIdx];
@@ -133,7 +135,7 @@ void main() {
         uint emitterIdx = rngNextInt(payload.rngState, numEmitter);
         Emitter emitter = emitterBuffer.data[emitterIdx];
         Triangle emitterTriangle = getTriangle(emitter.meshIdx, emitter.triangleIdx);
-        vec3 radiance = getMeshData(emitter.meshIdx).emission.radiance;
+        vec3 radiance = emitterTriangle.emission.radiance;
 
         // Sample point on the triangle
         float shadowErrorOffset;
@@ -142,7 +144,7 @@ void main() {
 
         vec3 dirToLight = lightPoint - payload.hit.pos;
 
-        if (dot(emitterShadingNormal, -dirToLight) > 0) { // Check that we are on the right side of the light
+        if (depth >= MIN_DEPTH - 1 && dot(emitterShadingNormal, -dirToLight) > 0) { // Check that we are on the right side of the light
             float d2 = lengthSqr(dirToLight);
             float d = sqrt(d2);
             dirToLight /= d;
@@ -152,7 +154,7 @@ void main() {
                 gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
                 0xff, 0, 0, 0,
                 offsetPoint(payload.hit, dirToLight), 0.0,
-                dirToLight, d - payload.hit.errorOffset * 2,
+                dirToLight, d - payload.hit.errorOffset * 4,
                 0
             );
 
@@ -161,14 +163,9 @@ void main() {
 
                 MaterialEvaluation eval = mtlEvaluate(material, payload.hit, false, outDir, inDir);
                 vec3 bsdfTimesCos = eval.bsdf * abs(inDir.z);
-                if (inDir.z * outDir.z < 0.0)  // Check that we are in the correct hemisphere
-                    bsdfTimesCos = vec3(0);
-
                 float cosLight = abs(dot(emitterTriangle.geomNormal, -dirToLight));
                 float invNextEventPdf = emitterTriangle.area * numEmitter * cosLight / d2;
-
-                float pdfBsdf = abs(inDir.z) / PI;
-                float pdfRatio = pdfBsdf * invNextEventPdf;
+                float pdfRatio = eval.pdf * invNextEventPdf;
                 float misWeight = 1.0 / (1.0 + pdfRatio * pdfRatio);
 
                 result += prefixWeight * misWeight * bsdfTimesCos * invNextEventPdf * radiance;
