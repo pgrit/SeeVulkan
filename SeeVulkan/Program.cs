@@ -19,8 +19,8 @@ rootCommand.SetHandler((useHdr) =>
 rootCommand.Invoke(args);
 
 SceneRegistry.AddSourceRelativeToScript("../Scenes");
-var scene = SceneRegistry.LoadScene("RgbSofa").MakeScene();
-// var scene = SceneRegistry.LoadScene("DebugScene").MakeScene();
+// var scene = SceneRegistry.LoadScene("RgbSofa").MakeScene();
+var scene = SceneRegistry.LoadScene("DebugScene").MakeScene();
 
 // Render reference image with SeeSharp
 const int width = 640;
